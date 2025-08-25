@@ -2311,21 +2311,25 @@ let editingEncomendaId = null;
                 // Construir ações dinamicamente com base no status e no papel do usuário
                 let acoesHTML = '';
                 if (rota.status === 'pendente') {
-                    // Permite lançar a rota pendente informando a quantidade
-                    acoesHTML += `<button class="btn-primary" style="background: #3498db; padding: 6px 12px; font-size: 12px; margin-right: 5px;" onclick="lancarRota(${rota.id})">Lançar</button>`;
+                    // Somente administradores ou líderes podem lançar rotas pendentes
+                    if (currentUser && (currentUser.role === 'admin' || currentUser.role === 'lider')) {
+                        acoesHTML += `<button class="btn-primary" style="background: #3498db; padding: 6px 12px; font-size: 12px; margin-right: 5px;" onclick="lancarRota(${rota.id})">Lançar</button>`;
+                    }
                 }
                 if (rota.status === 'entregue') {
                     // Se o pagamento ainda não foi efetuado, exibe botão para lançar pagamento
                     if (!rota.pagamento || rota.pagamento === 0) {
-                        acoesHTML += `<button class="btn-primary" style="background: #27ae60; padding: 6px 12px; font-size: 12px; margin-right: 5px;" onclick="openPagamentoModal(${rota.id})">Pagar</button>`;
+                        if (currentUser && (currentUser.role === 'admin' || currentUser.role === 'lider')) {
+                            acoesHTML += `<button class="btn-primary" style="background: #27ae60; padding: 6px 12px; font-size: 12px; margin-right: 5px;" onclick="openPagamentoModal(${rota.id})">Pagar</button>`;
+                        }
                     }
                     // Botão para visualizar comprovante somente se houver caminho
                     if (rota.comprovante_path) {
                         acoesHTML += `<button class="btn-secondary" style="background: #8e44ad; padding: 6px 12px; font-size: 12px; margin-right: 5px;" onclick="verComprovante(${rota.id})">Ver Comprovante</button>`;
                     }
                 }
-                // Botão de excluir apenas para administradores/gerentes/líderes
-                if (currentUser && (currentUser.role === 'admin' || currentUser.role === 'gerente' || currentUser.role === 'lider')) {
+                // Botão de excluir apenas para administradores ou líderes
+                if (currentUser && (currentUser.role === 'admin' || currentUser.role === 'lider')) {
                     acoesHTML += `<button class="btn-primary" style="background: #e74c3c; padding: 6px 12px; font-size: 12px;" onclick="deleteRota(${rota.id})">Excluir</button>`;
                 }
                 row.innerHTML = `
@@ -2697,9 +2701,12 @@ let editingEncomendaId = null;
                         <td data-label="Status"><span class="${statusClass}">${statusIcon} ${encomenda.status}</span></td>
                         <td data-label="Data/Hora">${new Date(encomenda.data_criacao).toLocaleString('pt-BR')}</td>
                         <td data-label="Ações">
-                            <button class="btn-secondary btn-sm" onclick="editarEncomenda(${encomenda.id})" title="Editar">✏️</button>
-                            <button class="btn-danger btn-sm" onclick="deleteEncomenda(${encomenda.id})" title="Excluir">🗑️</button>
-                            ${['admin','gerente','lider'].includes(currentUser.role) ? `<button class="btn-warning btn-sm" onclick="cancelarEncomenda(${encomenda.id})" title="Cancelar">❌</button>` : ''}
+                            <!-- Botões de ação são exibidos somente para administradores ou líderes -->
+                            ${ (currentUser && (currentUser.role === 'admin' || currentUser.role === 'lider')) ? `
+                                <button class="btn-secondary btn-sm" onclick="editarEncomenda(${encomenda.id})" title="Editar">✏️</button>
+                                <button class="btn-danger btn-sm" onclick="deleteEncomenda(${encomenda.id})" title="Excluir">🗑️</button>
+                                <button class="btn-warning btn-sm" onclick="cancelarEncomenda(${encomenda.id})" title="Cancelar">❌</button>
+                            ` : '' }
                         </td>
                     </tr>
                 `;
