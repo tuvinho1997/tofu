@@ -435,9 +435,14 @@ app.post('/api/membros', (req, res) => {
     });
 });
 
-app.delete('/api/membros/:id', (req, res) => {
+// Inativa um membro existente. Apenas administradores ou líderes podem
+// remover (inativar) membros. Gerentes e membros não possuem esta permissão.
+app.delete('/api/membros/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
-    
+    const role = req.user && req.user.role;
+    if (role !== 'admin' && role !== 'lider') {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
     db.run('UPDATE membros SET ativo = 0 WHERE id = ?', [id], function(err) {
         if (err) {
             return res.status(500).json({ error: err.message });
@@ -451,9 +456,10 @@ app.put('/api/membros/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
     const { nome, rg, cargo, telefone } = req.body;
 
-    // Verifica permissões do usuário logado
+    // Verifica permissões do usuário logado. Apenas administradores ou líderes
+    // podem editar dados de membros. Gerentes e membros não têm essa permissão.
     const role = req.user && req.user.role;
-    if (role !== 'admin' && role !== 'gerente' && role !== 'lider') {
+    if (role !== 'admin' && role !== 'lider') {
         return res.status(403).json({ error: 'Acesso negado' });
     }
     if (!nome || !rg) {
@@ -490,7 +496,9 @@ app.get('/api/rotas', (req, res) => {
     });
 });
 
-app.post('/api/rotas', (req, res) => {
+// Cria uma nova rota. Apenas usuários autenticados podem cadastrar rotas.  
+// Membros e gerentes podem cadastrar rotas, mas não podem editá-las posteriormente.  
+app.post('/api/rotas', authenticateToken, (req, res) => {
     const { membro_nome, quantidade, data_entrega, status, comprovante } = req.body;
     if (!membro_nome || !quantidade || !data_entrega) {
         return res.status(400).json({ error: 'Membro, quantidade e data de entrega são obrigatórios' });
@@ -560,7 +568,9 @@ app.post('/api/rotas', (req, res) => {
 app.delete('/api/rotas/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
     const role = req.user && req.user.role;
-    if (role !== 'admin' && role !== 'gerente' && role !== 'lider') {
+    // Somente administradores ou líderes podem remover rotas. Membros e gerentes
+    // podem cadastrar rotas, mas não possuem permissão de exclusão.
+    if (role !== 'admin' && role !== 'lider') {
         return res.status(403).json({ error: 'Acesso negado' });
     }
     db.run('DELETE FROM rotas WHERE id = ?', [id], function (err) {
@@ -574,11 +584,13 @@ app.delete('/api/rotas/:id', authenticateToken, (req, res) => {
     });
 });
 
-// Lança pagamento de uma rota entregue. Somente administradores, gerentes ou líderes podem pagar.
+// Lança pagamento de uma rota entregue. Somente administradores ou líderes podem pagar.
 app.put('/api/rotas/:id/pagamento', authenticateToken, (req, res) => {
     const { id } = req.params;
     const role = req.user && req.user.role;
-    if (role !== 'admin' && role !== 'gerente' && role !== 'lider') {
+    // Apenas administradores ou líderes estão autorizados a lançar pagamento.
+    // Gerentes e membros não possuem esta permissão.
+    if (role !== 'admin' && role !== 'lider') {
         return res.status(403).json({ error: 'Acesso negado' });
     }
     const { pagante_id } = req.body;
@@ -622,8 +634,14 @@ app.put('/api/rotas/:id/pagamento', authenticateToken, (req, res) => {
     });
 });
 
-// Atualizar rota (quantidade e status). Permite marcar uma rota pendente como entregue e informar a quantidade.
-app.put('/api/rotas/:id', (req, res) => {
+// Atualizar rota (quantidade e status). Somente administradores ou líderes podem atualizar uma rota.
+app.put('/api/rotas/:id', authenticateToken, (req, res) => {
+    const role = req.user && req.user.role;
+    // Somente administradores ou líderes podem editar rotas. Membros e gerentes
+    // têm permissão apenas para cadastrar.
+    if (role !== 'admin' && role !== 'lider') {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
     const { id } = req.params;
     const { quantidade, status } = req.body;
 
@@ -902,6 +920,17 @@ app.post('/api/encomendas', authenticateToken, (req, res) => {
     // Determina o usuário responsável: prefere o campo enviado, senão usa o usuário autenticado
     const usuarioFinal = usuario || (req.user && req.user.username) || null;
 
+    // Determina o status final da encomenda.  Membros e gerentes só podem
+    // cadastrar encomendas como pendentes.  O campo status enviado pelo
+    // frontend é ignorado para esses papéis.
+    let statusFinal = 'pendente';
+    const userRole = req.user && req.user.role;
+    if (userRole === 'admin' || userRole === 'lider') {
+        // Administradores e líderes podem definir outro status se informado,
+        // caso contrário permanece pendente.
+        statusFinal = (status !== undefined && status !== null && status !== '') ? status : 'pendente';
+    }
+
     db.run(
         `INSERT INTO encomendas 
         (cliente, familia, telefone_cliente, municao_5mm, municao_9mm, municao_762mm, municao_12cbc, valor_total, comissao, status, usuario) 
@@ -916,7 +945,7 @@ app.post('/api/encomendas', authenticateToken, (req, res) => {
             qtd12,
             totalFinal,
             comissaoFinal,
-            status || 'pendente',
+            statusFinal,
             usuarioFinal
         ],
         function (err) {
@@ -973,11 +1002,17 @@ app.put('/api/encomendas/:id', authenticateToken, (req, res) => {
     const newStatus = status || 'pendente';
     const usuarioFinal = usuario || (req.user && req.user.username) || null;
 
-    // Verifica se o usuário tem permissão para atualizar para status cancelado
+    // Verifica se o usuário tem permissão para realizar alterações na encomenda.
+    // Somente administradores ou líderes podem editar encomendas. Membros e gerentes
+    // estão autorizados apenas a cadastrar novas encomendas.
     const userRole = req.user && req.user.role;
+    if (userRole !== 'admin' && userRole !== 'lider') {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
+    // Verifica se o usuário tem permissão para atualizar para status cancelado
     if (newStatus === 'cancelado') {
-        if (userRole !== 'admin' && userRole !== 'gerente' && userRole !== 'lider') {
-            return res.status(403).json({ error: 'Apenas cargos de liderança podem cancelar encomendas' });
+        if (userRole !== 'admin' && userRole !== 'lider') {
+            return res.status(403).json({ error: 'Apenas líderes podem cancelar encomendas' });
         }
     }
 
@@ -1089,9 +1124,13 @@ app.put('/api/encomendas/:id', authenticateToken, (req, res) => {
     });
 });
 
-app.delete('/api/encomendas/:id', (req, res) => {
+// Excluir uma encomenda. Apenas administradores ou líderes podem remover encomendas.
+app.delete('/api/encomendas/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
-    
+    const role = req.user && req.user.role;
+    if (role !== 'admin' && role !== 'lider') {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
     db.run('DELETE FROM encomendas WHERE id = ?', [id], function(err) {
         if (err) {
             return res.status(500).json({ error: err.message });
@@ -1405,7 +1444,8 @@ app.get('/api/usuarios', (req, res) => {
 // Requer autenticação e cargos de liderança (admin, gerente ou lider).
 app.get('/api/usuarios/pendentes', authenticateToken, (req, res) => {
     const role = req.user && req.user.role;
-    if (role !== 'admin' && role !== 'gerente' && role !== 'lider') {
+    // Apenas administradores ou líderes podem acessar usuários pendentes para aprovação
+    if (role !== 'admin' && role !== 'lider') {
         return res.status(403).json({ error: 'Acesso negado' });
     }
     // Busca usuários com ativo = 0 e tenta unir com membros através da coluna usuario_id
@@ -1429,7 +1469,8 @@ app.get('/api/usuarios/pendentes', authenticateToken, (req, res) => {
 // Recebe no body { role, cargo } para definir o papel do usuário e o cargo no membro.
 app.put('/api/usuarios/:id/ativar', authenticateToken, (req, res) => {
     const roleAtual = req.user && req.user.role;
-    if (roleAtual !== 'admin' && roleAtual !== 'gerente' && roleAtual !== 'lider') {
+    // Apenas administradores ou líderes podem ativar usuários pendentes
+    if (roleAtual !== 'admin' && roleAtual !== 'lider') {
         return res.status(403).json({ error: 'Acesso negado' });
     }
     const userId = req.params.id;
@@ -1483,10 +1524,11 @@ app.post('/api/familias', authenticateToken, (req, res) => {
         return res.status(400).json({ error: 'Nome da família é obrigatório' });
     }
 
-    // Verifica se o usuário possui permissões de gerente/admin
+    // Verifica se o usuário possui permissões para cadastrar família.
+    // Membros, gerentes, líderes e administradores podem criar novas famílias.  
+    // Não há permissão de edição ou exclusão para membros/gerentes posteriormente.  
     const role = req.user && req.user.role;
-    // Permitir que administradores, gerentes e líderes cadastrem famílias
-    if (role !== 'admin' && role !== 'gerente' && role !== 'lider') {
+    if (!['admin', 'gerente', 'lider', 'membro'].includes(role)) {
         return res.status(403).json({ error: 'Acesso negado' });
     }
 
