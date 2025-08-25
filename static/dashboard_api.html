@@ -835,6 +835,12 @@
                         </select>
                     </div>
                     <button class="btn-primary" onclick="openModal('encomendaModal')">+ Nova Encomenda</button>
+                    <!-- Configuração de comissão: visível apenas para líderes/administradores -->
+                    <div id="commissionRateContainer" style="display:none; align-items:center; gap:8px; margin-left:auto;">
+                        <label for="commissionRateInput" style="margin-right:6px; font-size:14px;">Comissão (%)</label>
+                        <input type="number" id="commissionRateInput" min="0" max="100" step="0.1" style="width:80px; padding:4px 6px; border-radius:4px; border:1px solid rgba(255,255,255,0.3); background:rgba(255,255,255,0.1); color:#ecf0f1; text-align:center;">
+                        <button class="btn-primary" style="padding:6px 12px; margin-left:4px;" onclick="updateCommissionRate()">Salvar</button>
+                    </div>
                 </div>
                 
                 <div class="table-container">
@@ -846,8 +852,9 @@
                                 <th>Telefone</th>
                                 <th>Vendedor</th>
                                 <th>Munições</th>
-                                <th>Valor Total</th>
-                                <th>Comissão</th>
+                        <th>Valor Total</th>
+                        <th>Comissão</th>
+                        <th>Valor Líquido</th>
                                 <th>Status</th>
                                 <th>Data/Hora</th>
                                 <th>Ações</th>
@@ -855,7 +862,7 @@
                         </thead>
                         <tbody id="encomendasTableBody">
                             <tr>
-                                <td colspan="10" style="text-align: center; color: #bdc3c7; padding: 40px; font-size: 16px;">
+                            <td colspan="11" style="text-align: center; color: #bdc3c7; padding: 40px; font-size: 16px;">
                                     📦 Nenhuma encomenda cadastrada<br>
                                     <small>Clique em "Nova Encomenda" para começar</small>
                                 </td>
@@ -1642,25 +1649,28 @@ let editingEncomendaId = null;
                     }
                 }
 
-                // Exibe o botão de adicionar itens no estoque apenas para administradores, gerentes ou líderes
+                // Exibe o botão de adicionar itens no estoque apenas para administradores ou líderes
                 const addEstoqueBtn = document.getElementById('btnAddEstoque');
                 if (addEstoqueBtn) {
-                    if (user.role === 'admin' || user.role === 'gerente' || user.role === 'lider') {
+                    if (user.role === 'admin' || user.role === 'lider') {
                         addEstoqueBtn.style.display = 'inline-block';
                     } else {
                         addEstoqueBtn.style.display = 'none';
                     }
                 }
 
-                // Exibe o botão de retirada de estoque para admin/gerente/líder
+                // Exibe o botão de retirada de estoque apenas para administradores ou líderes
                 const retiradaBtn = document.getElementById('btnRetiradaEstoque');
                 if (retiradaBtn) {
-                    if (user.role === 'admin' || user.role === 'gerente' || user.role === 'lider') {
+                    if (user.role === 'admin' || user.role === 'lider') {
                         retiradaBtn.style.display = 'inline-block';
                     } else {
                         retiradaBtn.style.display = 'none';
                     }
                 }
+
+                // Carrega e exibe a configuração de taxa de comissão conforme o papel do usuário
+                loadCommissionRate();
                 // Exibe o botão de saída avulsa apenas para líderes
                 const saidaBtn = document.getElementById('btnSaidaAvulsa');
                 if (saidaBtn) {
@@ -2534,6 +2544,78 @@ let editingEncomendaId = null;
             }
         }
 
+        /**
+         * Carrega a taxa de comissão atual do servidor e atualiza o campo de
+         * configuração. Exibe ou oculta o painel de configuração de acordo
+         * com o papel do usuário logado. Os líderes e administradores podem
+         * ajustar a taxa de comissão; para outros usuários o painel é ocultado.
+         */
+        async function loadCommissionRate() {
+            const container = document.getElementById('commissionRateContainer');
+            const input = document.getElementById('commissionRateInput');
+            if (!container || !input) return;
+            // Exibir apenas para líderes ou administradores
+            if (currentUser && (currentUser.role === 'admin' || currentUser.role === 'lider')) {
+                container.style.display = 'flex';
+            } else {
+                container.style.display = 'none';
+                return;
+            }
+            try {
+                const response = await fetch(`${API_BASE}/config/commission-rate`);
+                if (!response.ok) {
+                    throw new Error('Falha ao obter taxa de comissão');
+                }
+                const data = await response.json();
+                const rate = parseFloat(data.rate);
+                if (!isNaN(rate)) {
+                    // Armazena globalmente e atualiza o input em porcentagem
+                    window.currentCommissionRate = rate;
+                    input.value = (rate * 100).toFixed(2);
+                }
+            } catch (error) {
+                console.error('Erro ao carregar taxa de comissão:', error);
+            }
+        }
+
+        /**
+         * Envia uma nova taxa de comissão ao servidor. Somente líderes ou
+         * administradores podem realizar a operação. Após atualização
+         * bem-sucedida, recarrega as encomendas para aplicar o novo percentual.
+         */
+        async function updateCommissionRate() {
+            const input = document.getElementById('commissionRateInput');
+            if (!input) return;
+            const valuePercent = parseFloat(input.value);
+            if (isNaN(valuePercent) || valuePercent < 0 || valuePercent > 100) {
+                alert('Informe um valor percentual válido entre 0 e 100');
+                return;
+            }
+            const rate = valuePercent / 100.0;
+            try {
+                const token = localStorage.getItem('authToken');
+                const response = await fetch(`${API_BASE}/config/commission-rate`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': token ? 'Bearer ' + token : undefined
+                    },
+                    body: JSON.stringify({ rate })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    alert(data.message || 'Taxa de comissão atualizada com sucesso');
+                    // Atualiza valor global e recarrega encomendas para refletir mudanças
+                    window.currentCommissionRate = rate;
+                    loadEncomendas();
+                } else {
+                    alert(data.error || 'Erro ao atualizar taxa de comissão');
+                }
+            } catch (error) {
+                alert('Erro de conexão: ' + error.message);
+            }
+        }
+
         function renderEncomendasTable(encomendas) {
             console.log('=== RENDERIZANDO TABELA DE ENCOMENDAS ===');
             const tbody = document.getElementById('encomendasTableBody');
@@ -2689,6 +2771,7 @@ let editingEncomendaId = null;
                 if (encomenda.status === 'entregue' || encomenda.status === 'pronto') {
                     shortageDisplay = '';
                 }
+                const valorLiquido = parseFloat(encomenda.valor_total || 0) - parseFloat(encomenda.comissao || 0);
                 html += `
                     <tr>
                         <td data-label="Cliente">${encomenda.cliente}</td>
@@ -2698,6 +2781,7 @@ let editingEncomendaId = null;
                         <td data-label="Munições">${municoes.join(', ')}${shortageDisplay}</td>
                         <td data-label="Valor Total">R$ ${parseFloat(encomenda.valor_total || 0).toFixed(2)}</td>
                         <td data-label="Comissão">R$ ${parseFloat(encomenda.comissao || 0).toFixed(2)}</td>
+                        <td data-label="Valor Líquido">R$ ${valorLiquido.toFixed(2)}</td>
                         <td data-label="Status"><span class="${statusClass}">${statusIcon} ${encomenda.status}</span></td>
                         <td data-label="Data/Hora">${new Date(encomenda.data_criacao).toLocaleString('pt-BR')}</td>
                         <td data-label="Ações">
