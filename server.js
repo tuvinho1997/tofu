@@ -171,6 +171,21 @@ function initDatabase() {
                 data_atualizacao DATETIME DEFAULT CURRENT_TIMESTAMP
             )`);
 
+            // Cria um índice único para evitar duplicidades de (tipo, nome) no estoque.  
+            db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_estoque_tipo_nome ON estoque(tipo, nome)', (err) => {
+                if (err) {
+                    console.error('Erro ao criar índice único em estoque:', err.message);
+                } else {
+                    // Remove linhas duplicadas mantendo apenas o primeiro registro (menor rowid)
+                    db.run(`DELETE FROM estoque
+                            WHERE rowid NOT IN (SELECT MIN(rowid) FROM estoque GROUP BY tipo, nome)`, (delErr) => {
+                        if (delErr) {
+                            console.error('Erro ao remover duplicatas do estoque:', delErr.message);
+                        }
+                    });
+                }
+            });
+
             // Tabela de imagens
             db.run(`CREATE TABLE IF NOT EXISTS imagens (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
