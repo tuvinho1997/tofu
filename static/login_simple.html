@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Facção Control - Login</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        body::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 800px;
+            height: 800px;
+            background-image: url('Yin_yang.svg.png');
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: center;
+            opacity: 0.08;
+            filter: blur(2px);
+            z-index: 0;
+        }
+
+        .login-container {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 20px;
+            padding: 40px;
+            width: 100%;
+            max-width: 400px;
+            box-shadow: 0 25px 45px rgba(0, 0, 0, 0.2);
+            position: relative;
+            z-index: 1;
+        }
+
+        .logo {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .logo .yin-yang {
+            width: 60px;
+            height: 60px;
+            margin: 0 auto 15px;
+            background-image: url('Yin_yang.svg.png');
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: center;
+        }
+
+        .logo h1 {
+            color: white;
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 5px;
+        }
+
+        .logo p {
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 14px;
+        }
+
+        .error-message {
+            background: rgba(220, 53, 69, 0.2);
+            border: 1px solid rgba(220, 53, 69, 0.3);
+            color: #ff6b7a;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: center;
+            font-size: 14px;
+            display: none;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            color: white;
+            font-weight: 500;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 15px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+
+        .form-group input::placeholder {
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: rgba(255, 255, 255, 0.4);
+            background: rgba(255, 255, 255, 0.15);
+            box-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
+        }
+
+        .login-btn {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            border-radius: 10px;
+            color: white;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 10px;
+        }
+
+        .login-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
+        }
+
+        .login-btn:active {
+            transform: translateY(0);
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 12px;
+        }
+
+        @media (max-width: 480px) {
+            .login-container {
+                margin: 20px;
+                padding: 30px 25px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="logo">
+            <div class="yin-yang"></div>
+            <h1>Facção Control</h1>
+            <p>Sistema de Controle - GTA RP</p>
+        </div>
+
+        <div class="error-message" id="errorMessage">
+            Erro de conexão. Tente novamente.
+        </div>
+
+        <!-- Containers para formulários de login e cadastro -->
+        <div id="loginFormContainer">
+            <form id="loginForm">
+                <div class="form-group">
+                    <label for="username">Usuário</label>
+                    <input type="text" id="username" name="username" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="password">Senha</label>
+                    <input type="password" id="password" name="password" required>
+                </div>
+
+                <button type="submit" class="login-btn">Entrar</button>
+            </form>
+            <p style="color: rgba(255,255,255,0.8); font-size: 14px; text-align:center; margin-top: 15px;">
+                Não possui conta? <a href="#" id="showRegister" style="color:#ffd700; text-decoration:underline; cursor:pointer;">Cadastre-se</a>
+            </p>
+        </div>
+
+        <!-- Formulário de cadastro (oculto inicialmente) -->
+        <div id="registerFormContainer" style="display:none;">
+            <form id="registerForm">
+                <div class="form-group">
+                    <label for="registerNome">Nome</label>
+                    <input type="text" id="registerNome" name="registerNome" required>
+                </div>
+                <div class="form-group">
+                    <label for="registerRg">RG</label>
+                    <input type="text" id="registerRg" name="registerRg" required>
+                </div>
+                <div class="form-group">
+                    <label for="registerTelefone">Telefone</label>
+                    <input type="text" id="registerTelefone" name="registerTelefone">
+                </div>
+                <div class="form-group">
+                    <label for="registerUsername">Usuário</label>
+                    <input type="text" id="registerUsername" name="registerUsername" required>
+                </div>
+                <div class="form-group">
+                    <label for="registerPassword">Senha</label>
+                    <input type="password" id="registerPassword" name="registerPassword" required>
+                </div>
+                <button type="submit" class="login-btn">Cadastrar</button>
+            </form>
+            <p style="color: rgba(255,255,255,0.8); font-size: 14px; text-align:center; margin-top: 15px;">
+                Já possui conta? <a href="#" id="showLogin" style="color:#ffd700; text-decoration:underline; cursor:pointer;">Fazer login</a>
+            </p>
+        </div>
+
+        <div class="footer">
+            Sistema de Controle da Facção
+        </div>
+    </div>
+
+    <script>
+        // Função auxiliar para exibir mensagens de erro
+        function showError(message) {
+            const errorMessage = document.getElementById('errorMessage');
+            errorMessage.textContent = message;
+            errorMessage.style.display = 'block';
+        }
+
+        // Login
+        document.getElementById('loginForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    // Salvar token e informações do usuário no localStorage
+                    localStorage.setItem('authToken', data.token);
+                    localStorage.setItem('user', JSON.stringify(data.user));
+                    // Redirecionar para o dashboard
+                    window.location.href = '/static/dashboard_api.html';
+                } else {
+                    showError(data.error || 'Erro de login');
+                }
+            } catch (error) {
+                console.error('Erro:', error);
+                showError('Erro de conexão. Tente novamente.');
+            }
+        });
+
+        // Mostrar formulário de cadastro
+        document.getElementById('showRegister').addEventListener('click', function(e) {
+            e.preventDefault();
+            document.getElementById('loginFormContainer').style.display = 'none';
+            document.getElementById('registerFormContainer').style.display = 'block';
+            document.getElementById('errorMessage').style.display = 'none';
+        });
+        // Voltar ao formulário de login
+        document.getElementById('showLogin').addEventListener('click', function(e) {
+            e.preventDefault();
+            document.getElementById('registerFormContainer').style.display = 'none';
+            document.getElementById('loginFormContainer').style.display = 'block';
+            document.getElementById('errorMessage').style.display = 'none';
+        });
+
+        // Cadastro
+        document.getElementById('registerForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const nome = document.getElementById('registerNome').value;
+            const rg = document.getElementById('registerRg').value;
+            const telefone = document.getElementById('registerTelefone').value;
+            const username = document.getElementById('registerUsername').value;
+            const password = document.getElementById('registerPassword').value;
+            try {
+                const response = await fetch('/api/auth/register', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ username, password, nome, rg, telefone })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    alert(data.message || 'Cadastro realizado. Aguarde aprovação.');
+                    // Volta para o login
+                    document.getElementById('registerFormContainer').style.display = 'none';
+                    document.getElementById('loginFormContainer').style.display = 'block';
+                    document.getElementById('errorMessage').style.display = 'none';
+                    // Limpa campos de cadastro
+                    document.getElementById('registerForm').reset();
+                } else {
+                    showError(data.error || 'Erro ao cadastrar');
+                }
+            } catch (error) {
+                console.error('Erro:', error);
+                showError('Erro de conexão. Tente novamente.');
+            }
+        });
+    </script>
+</body>
+</html>
+

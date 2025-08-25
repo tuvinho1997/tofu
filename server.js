@@ -1,0 +1,1543 @@
+const express = require('express');
+const sqlite3 = require('sqlite3').verbose();
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const cors = require('cors');
+const bodyParser = require('body-parser');
+const path = require('path');
+const fs = require('fs');
+
+const app = express();
+const PORT = process.env.PORT || 5000;
+// Chave secreta utilizada para assinar tokens JWT. Deve ser definida via variável de ambiente em produção.
+const JWT_SECRET = process.env.JWT_SECRET || 'faccao_control_secret_key_2025';
+
+// Middleware
+app.use(cors());
+// Define um limite maior para JSON e URL-encoded para suportar uploads de imagens codificadas em base64
+app.use(bodyParser.json({ limit: '10mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
+app.use('/static', express.static(path.join(__dirname, 'static')));
+
+// Servir arquivos de comprovantes e uploads
+// Permite definir o diretório de uploads via variável de ambiente (UPLOADS_DIR). Caso não seja definido, usa a pasta padrão "uploads" dentro do projeto.
+const uploadsDir = process.env.UPLOADS_DIR || path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+    // Cria a pasta de uploads, incluindo diretórios intermediários se necessário
+    fs.mkdirSync(uploadsDir, { recursive: true });
+}
+app.use('/uploads', express.static(uploadsDir));
+
+// Banco de dados SQLite
+// O caminho do arquivo de banco pode ser configurado via variável de ambiente DB_PATH (ex.: /home/user/data/faccao_control.db)
+const DB_PATH = process.env.DB_PATH || 'faccao_control.db';
+const db = new sqlite3.Database(DB_PATH);
+
+// Inicializar banco de dados
+function initDatabase() {
+    return new Promise((resolve, reject) => {
+        db.serialize(() => {
+            // Tabela de usuários
+            db.run(`CREATE TABLE IF NOT EXISTS usuarios (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL,
+                role TEXT DEFAULT 'admin',
+                ativo BOOLEAN DEFAULT 1,
+                data_criacao DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`);
+
+            // Tabela de membros
+            db.run(`CREATE TABLE IF NOT EXISTS membros (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nome TEXT NOT NULL,
+                rg TEXT NOT NULL,
+                telefone TEXT,
+                ativo BOOLEAN DEFAULT 1,
+                cargo TEXT DEFAULT 'membro',
+                data_criacao DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`);
+
+            // Garante que a coluna cargo exista. Caso a tabela já exista sem a coluna cargo, adiciona-a com valor padrão 'membro'.
+            db.run('ALTER TABLE membros ADD COLUMN cargo TEXT DEFAULT "membro"', (err) => {
+                if (err && !/duplicate column/i.test(err.message)) {
+                    console.error('Erro ao adicionar coluna cargo em membros:', err.message);
+                }
+            });
+            // Garante que a coluna telefone exista. Caso a tabela já exista sem essa coluna, adiciona-a.
+            db.run('ALTER TABLE membros ADD COLUMN telefone TEXT', (err) => {
+                if (err && !/duplicate column/i.test(err.message)) {
+                    console.error('Erro ao adicionar coluna telefone em membros:', err.message);
+                }
+            });
+
+            // Garante que a coluna usuario_id exista em membros para vincular membros a usuários (cadastros pendentes).
+            db.run('ALTER TABLE membros ADD COLUMN usuario_id INTEGER', (err) => {
+                if (err && !/duplicate column/i.test(err.message)) {
+                    console.error('Erro ao adicionar coluna usuario_id em membros:', err.message);
+                }
+            });
+
+            // Tabela de rotas
+            db.run(`CREATE TABLE IF NOT EXISTS rotas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                membro_id INTEGER,
+                membro_nome TEXT,
+                quantidade INTEGER,
+                data_entrega DATE,
+                status TEXT DEFAULT 'pendente',
+                comprovante_path TEXT,
+                /*
+                 * Campo pagamento registra quanto o membro recebe por realizar a rota.
+                 * A cada rota entregue, o membro tem direito a R$ 16.000,00.
+                 * Se o status da rota for diferente de "entregue", o pagamento permanece em 0
+                 * até que a rota seja marcada como entregue. Esse campo facilita a
+                 * contabilização de custos de operação.
+                 */
+                pagamento REAL DEFAULT 0,
+                /*
+                 * Identificador do usuário que lançou o pagamento da rota.  Este campo
+                 * armazena o id do usuário com papel de líder responsável pelo
+                 * pagamento. Se nulo, indica que o pagamento ainda não foi
+                 * lançado.  Quando um pagamento for confirmado, será
+                 * preenchido com o id do líder selecionado.
+                 */
+                pagamento_usuario_id INTEGER,
+                data_criacao DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (membro_id) REFERENCES membros (id)
+            )`);
+
+            // Garante que a coluna comprovante_path exista. Caso a tabela já exista sem essa coluna, adiciona-a.
+            db.run('ALTER TABLE rotas ADD COLUMN comprovante_path TEXT', (err) => {
+                if (err && !/duplicate column/i.test(err.message)) {
+                    console.error('Erro ao adicionar coluna comprovante_path em rotas:', err.message);
+                }
+            });
+            // Garante que a coluna pagamento exista. Se a tabela rotas já estiver criada sem esta coluna,
+            // adiciona-a com valor padrão 0. Esse campo registra quanto o membro recebe por rota.
+            db.run('ALTER TABLE rotas ADD COLUMN pagamento REAL DEFAULT 0', (err) => {
+                if (err && !/duplicate column/i.test(err.message)) {
+                    console.error('Erro ao adicionar coluna pagamento em rotas:', err.message);
+                }
+            });
+
+            // Garante que a coluna pagamento_usuario_id exista. Esta coluna guarda o id do
+            // usuário (líder) que realizou o lançamento do pagamento. Caso a tabela
+            // já exista sem esta coluna, adiciona-a.
+            db.run('ALTER TABLE rotas ADD COLUMN pagamento_usuario_id INTEGER', (err) => {
+                if (err && !/duplicate column/i.test(err.message)) {
+                    console.error('Erro ao adicionar coluna pagamento_usuario_id em rotas:', err.message);
+                }
+            });
+
+            // Tabela de encomendas
+            db.run(`CREATE TABLE IF NOT EXISTS encomendas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cliente TEXT NOT NULL,
+                familia TEXT NOT NULL,
+                telefone_cliente TEXT,
+                municao_5mm INTEGER DEFAULT 0,
+                municao_9mm INTEGER DEFAULT 0,
+                municao_762mm INTEGER DEFAULT 0,
+                municao_12cbc INTEGER DEFAULT 0,
+                valor_total REAL,
+                comissao REAL,
+                status TEXT DEFAULT 'pendente',
+                usuario TEXT,
+                data_criacao DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`);
+
+            // Garante que a coluna usuario exista na tabela encomendas. Caso a tabela já exista sem essa coluna, adiciona-a.
+            db.run('ALTER TABLE encomendas ADD COLUMN usuario TEXT', (err) => {
+                if (err && !/duplicate column/i.test(err.message)) {
+                    console.error('Erro ao adicionar coluna usuario em encomendas:', err.message);
+                }
+            });
+
+            // Garante que a coluna telefone_cliente exista na tabela encomendas. Caso a tabela já exista sem essa coluna, adiciona-a.
+            db.run('ALTER TABLE encomendas ADD COLUMN telefone_cliente TEXT', (err) => {
+                if (err && !/duplicate column/i.test(err.message)) {
+                    console.error('Erro ao adicionar coluna telefone_cliente em encomendas:', err.message);
+                }
+            });
+
+            // Tabela de estoque
+            db.run(`CREATE TABLE IF NOT EXISTS estoque (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tipo TEXT NOT NULL,
+                nome TEXT NOT NULL,
+                quantidade INTEGER DEFAULT 0,
+                preco REAL DEFAULT 0,
+                data_atualizacao DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`);
+
+            // Tabela de imagens
+            db.run(`CREATE TABLE IF NOT EXISTS imagens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nome TEXT NOT NULL,
+                tipo TEXT NOT NULL,
+                caminho TEXT NOT NULL,
+                descricao TEXT,
+                data_upload DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`);
+
+            // Tabela de saídas avulsas de estoque. Armazena retiradas destinadas a membros específicas.
+            db.run(`CREATE TABLE IF NOT EXISTS saidas_avulsas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tipo TEXT NOT NULL,
+                item TEXT NOT NULL,
+                quantidade REAL NOT NULL,
+                retirado_por TEXT NOT NULL,
+                destinos TEXT,
+                data_saida DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`);
+
+            // Tabela de famílias
+            db.run(`CREATE TABLE IF NOT EXISTS familias (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nome TEXT NOT NULL UNIQUE,
+                data_criacao DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`);
+
+            // Criar usuário admin padrão
+            const hashedPassword = bcrypt.hashSync('tofu$2025', 10);
+            db.run(`INSERT OR IGNORE INTO usuarios (username, password, role) VALUES (?, ?, ?)`, 
+                   ['tofu', hashedPassword, 'admin']);
+
+            // Criar usuário líder padrão para testes
+            const hashedLiderPassword = bcrypt.hashSync('lider$2025', 10);
+            db.run(`INSERT OR IGNORE INTO usuarios (username, password, role) VALUES (?, ?, ?)`,
+                   ['lider', hashedLiderPassword, 'lider']);
+
+            // Garante que a coluna ativo exista na tabela usuarios. Caso a tabela já exista sem essa coluna, adiciona-a.
+            db.run('ALTER TABLE usuarios ADD COLUMN ativo BOOLEAN DEFAULT 1', (err) => {
+                if (err && !/duplicate column/i.test(err.message)) {
+                    console.error('Erro ao adicionar coluna ativo em usuarios:', err.message);
+                }
+            });
+
+            // Inicializar estoque com materiais
+            // Inicializa o estoque com todas as quantidades zeradas.  Anteriormente o
+            // sistema criava um estoque inicial com 1000 unidades de alumínio, cobre,
+            // embalagem plástica e ferro, 100 de titânio e zero de munições.  A pedido
+            // do usuário, o estoque padrão agora começa vazio para cada item.  O
+            // preço permanece o mesmo apenas como referência para cálculos.
+            const materiais = [
+                { tipo: 'material', nome: 'Alumínio', quantidade: 0, preco: 24.50 },
+                { tipo: 'material', nome: 'Cobre', quantidade: 0, preco: 24.62 },
+                { tipo: 'material', nome: 'Emb Plástica', quantidade: 0, preco: 24.50 },
+                { tipo: 'material', nome: 'Ferro', quantidade: 0, preco: 24.50 },
+                { tipo: 'material', nome: 'Titânio', quantidade: 0, preco: 24.62 },
+                { tipo: 'municao', nome: '5mm', quantidade: 0, preco: 100.00 },
+                { tipo: 'municao', nome: '9mm', quantidade: 0, preco: 125.00 },
+                { tipo: 'municao', nome: '762mm', quantidade: 0, preco: 200.00 },
+                { tipo: 'municao', nome: '12cbc', quantidade: 0, preco: 200.00 }
+            ];
+
+            materiais.forEach(material => {
+                db.run(`INSERT OR IGNORE INTO estoque (tipo, nome, quantidade, preco) VALUES (?, ?, ?, ?)`,
+                       [material.tipo, material.nome, material.quantidade, material.preco]);
+            });
+
+            console.log('✅ Banco de dados inicializado com sucesso!');
+            resolve();
+        });
+    });
+}
+
+// Middleware de autenticação
+function authenticateToken(req, res, next) {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) {
+        return res.status(401).json({ error: 'Token de acesso requerido' });
+    }
+
+    jwt.verify(token, JWT_SECRET, (err, user) => {
+        if (err) {
+            return res.status(403).json({ error: 'Token inválido' });
+        }
+        req.user = user;
+        next();
+    });
+}
+
+/**
+ * Gera rotas pendentes para cada membro ativo para todos os dias da próxima semana.
+ * Se a rota já existir para o membro e data, não é criada novamente.
+ * A semana considerada inicia na próxima segunda‑feira e inclui 7 dias.
+ */
+async function generateRotasParaProximaSemana() {
+    return new Promise((resolve, reject) => {
+        // Obtém a data atual e calcula a próxima segunda‑feira
+        const hoje = new Date();
+        const diaSemana = hoje.getDay(); // 0=domingo, 1=segunda, ..., 6=sábado
+        // Distância até a próxima segunda‑feira
+        let diasAteSegunda = 8 - diaSemana;
+        if (diaSemana === 0) {
+            // Se hoje é domingo (0), próxima segunda é amanhã (1 dia)
+            diasAteSegunda = 1;
+        }
+        const inicioSemana = new Date(hoje);
+        inicioSemana.setDate(hoje.getDate() + diasAteSegunda);
+
+        // Gera array de 7 datas (segunda a domingo)
+        const datas = [];
+        for (let i = 0; i < 7; i++) {
+            const d = new Date(inicioSemana);
+            d.setDate(inicioSemana.getDate() + i);
+            const isoDate = d.toISOString().substring(0, 10);
+            datas.push(isoDate);
+        }
+
+        // Buscar todos os membros ativos que tenham o cargo 'membro'
+        // Somente membros (e não gerentes/líderes) devem receber rotas pendentes automaticamente
+        db.all('SELECT id, nome FROM membros WHERE ativo = 1 AND cargo = "membro"', (err, membros) => {
+            if (err) {
+                console.error('Erro ao consultar membros para geração de rotas:', err.message);
+                return reject(err);
+            }
+            // Para cada membro e cada data, criar rota se não existir
+            let pendentes = 0;
+            membros.forEach(membro => {
+                datas.forEach(dataEntrega => {
+                    db.get('SELECT id FROM rotas WHERE membro_id = ? AND data_entrega = ?', [membro.id, dataEntrega], (err2, row) => {
+                        if (err2) {
+                            console.error('Erro ao verificar rotas existentes:', err2.message);
+                            return;
+                        }
+                        if (!row) {
+                            // Inserir rota pendente com quantidade zero
+                            db.run('INSERT INTO rotas (membro_id, membro_nome, quantidade, data_entrega, status) VALUES (?, ?, ?, ?, ?)',
+                                [membro.id, membro.nome, 0, dataEntrega, 'pendente'], function (err3) {
+                                    if (err3) {
+                                        console.error('Erro ao inserir rota pendente:', err3.message);
+                                    } else {
+                                        pendentes++;
+                                    }
+                                });
+                        }
+                    });
+                });
+            });
+            // Não esperamos todas as inserções terminarem (assíncronas), apenas registra
+            console.log(`Rotas geradas/atualizadas para a próxima semana: ${pendentes}`);
+            resolve();
+        });
+    });
+}
+
+// Rotas de autenticação
+app.post('/api/auth/login', (req, res) => {
+    const { username, password } = req.body;
+
+    db.get('SELECT * FROM usuarios WHERE username = ?', [username], (err, user) => {
+        if (err) {
+            return res.status(500).json({ error: 'Erro interno do servidor' });
+        }
+
+        if (!user || !bcrypt.compareSync(password, user.password)) {
+            return res.status(401).json({ error: 'Credenciais inválidas' });
+        }
+
+        // Verifica se o usuário foi aprovado (campo ativo)
+        if (!user.ativo) {
+            return res.status(403).json({ error: 'Usuário ainda não foi aprovado. Aguarde autorização.' });
+        }
+
+        const token = jwt.sign(
+            { id: user.id, username: user.username, role: user.role },
+            JWT_SECRET,
+            { expiresIn: '24h' }
+        );
+
+        res.json({
+            message: 'Login realizado com sucesso',
+            token: token,
+            user: {
+                id: user.id,
+                username: user.username,
+                role: user.role
+            }
+        });
+    });
+});
+
+// Cadastro de novos usuários (solicitação de cadastro)
+// Cria um usuário com role 'membro' e ativo = 0 e um registro correspondente em membros com cargo 'membro' e ativo = 0.
+app.post('/api/auth/register', async (req, res) => {
+    const { username, password, nome, rg, telefone } = req.body;
+
+    // Verificações básicas
+    if (!username || !password || !nome || !rg) {
+        return res.status(400).json({ error: 'Usuário, senha, nome e RG são obrigatórios' });
+    }
+    // Verifica se já existe usuário com o mesmo username
+    db.get('SELECT id FROM usuarios WHERE username = ?', [username], (err, existingUser) => {
+        if (err) {
+            return res.status(500).json({ error: 'Erro ao verificar usuário existente' });
+        }
+        if (existingUser) {
+            return res.status(400).json({ error: 'Nome de usuário já em uso' });
+        }
+        // Hash da senha
+        const hashed = bcrypt.hashSync(password, 10);
+        // Insere na tabela de usuários com role 'membro' e ativo 0
+        db.run('INSERT INTO usuarios (username, password, role, ativo) VALUES (?, ?, ?, 0)', [username, hashed, 'membro'], function(err2) {
+            if (err2) {
+                console.error(err2);
+                return res.status(500).json({ error: 'Erro ao registrar usuário' });
+            }
+            const userId = this.lastID;
+            // Insere na tabela de membros com cargo 'membro', ativo 0 e vínculo ao usuário
+            db.run('INSERT INTO membros (nome, rg, telefone, cargo, ativo, usuario_id) VALUES (?, ?, ?, ?, 0, ?)', [nome, rg, telefone || null, 'membro', userId], function(err3) {
+                if (err3) {
+                    console.error(err3);
+                    return res.status(500).json({ error: 'Erro ao registrar membro' });
+                }
+                // Registro criado com sucesso
+                return res.json({ message: 'Cadastro realizado. Aguarde aprovação de um líder ou administrador.' });
+            });
+        });
+    });
+});
+
+app.get('/api/auth/init-admin', (req, res) => {
+    res.json({ message: 'Admin já inicializado' });
+});
+
+// Rotas de membros
+app.get('/api/membros', (req, res) => {
+    db.all('SELECT * FROM membros WHERE ativo = 1 ORDER BY data_criacao DESC', (err, rows) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json(rows);
+    });
+});
+
+app.post('/api/membros', (req, res) => {
+    const { nome, rg, cargo, telefone } = req.body;
+    if (!nome || !rg) {
+        return res.status(400).json({ error: 'Nome e RG são obrigatórios' });
+    }
+    const cargoVal = cargo || 'membro';
+    const telVal = telefone || null;
+    db.run('INSERT INTO membros (nome, rg, cargo, telefone) VALUES (?, ?, ?, ?)', [nome, rg, cargoVal, telVal], function (err) {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json({
+            message: 'Membro cadastrado com sucesso',
+            id: this.lastID
+        });
+    });
+});
+
+app.delete('/api/membros/:id', (req, res) => {
+    const { id } = req.params;
+    
+    db.run('UPDATE membros SET ativo = 0 WHERE id = ?', [id], function(err) {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json({ message: 'Membro removido com sucesso' });
+    });
+});
+
+// Atualizar dados de um membro (nome, rg, cargo). Somente administradores, gerentes ou líderes podem modificar.
+app.put('/api/membros/:id', authenticateToken, (req, res) => {
+    const { id } = req.params;
+    const { nome, rg, cargo, telefone } = req.body;
+
+    // Verifica permissões do usuário logado
+    const role = req.user && req.user.role;
+    if (role !== 'admin' && role !== 'gerente' && role !== 'lider') {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
+    if (!nome || !rg) {
+        return res.status(400).json({ error: 'Nome e RG são obrigatórios' });
+    }
+    const cargoVal = cargo || 'membro';
+    const telVal = telefone || null;
+    db.run('UPDATE membros SET nome = ?, rg = ?, cargo = ?, telefone = ? WHERE id = ?', [nome, rg, cargoVal, telVal, id], function(err) {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        if (this.changes === 0) {
+            return res.status(404).json({ error: 'Membro não encontrado' });
+        }
+        res.json({ message: 'Membro atualizado com sucesso' });
+    });
+});
+
+// Rotas de rotas
+app.get('/api/rotas', (req, res) => {
+    // Retorna todas as rotas, incluindo o nome do usuário que realizou o pagamento (se houver).
+    // Fazemos um LEFT JOIN com a tabela de usuários para obter o username do pagante.
+    const sql = `
+        SELECT rotas.*, u.username AS pagante_username
+        FROM rotas
+        LEFT JOIN usuarios u ON rotas.pagamento_usuario_id = u.id
+        ORDER BY rotas.data_criacao DESC
+    `;
+    db.all(sql, (err, rows) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json(rows);
+    });
+});
+
+app.post('/api/rotas', (req, res) => {
+    const { membro_nome, quantidade, data_entrega, status, comprovante } = req.body;
+    if (!membro_nome || !quantidade || !data_entrega) {
+        return res.status(400).json({ error: 'Membro, quantidade e data de entrega são obrigatórios' });
+    }
+    const qtd = parseInt(quantidade);
+    if (isNaN(qtd) || qtd <= 0) {
+        return res.status(400).json({ error: 'Quantidade inválida' });
+    }
+    // Determina status: se não informado, assume "pendente" (rotas automáticas) ou 'entregue' para rotas manuais
+    const rotaStatus = status || 'pendente';
+
+    // Processa imagem de comprovante se fornecida (base64 DataURL)
+    let comprovantePath = null;
+    if (comprovante) {
+        try {
+            // exemplo de formato: data:image/png;base64,AAAA...
+            const matches = comprovante.match(/^data:image\/(png|jpeg|jpg);base64,(.+)$/);
+            if (matches) {
+                const ext = matches[1];
+                const base64Data = matches[2];
+                const fileName = `comprovante_${Date.now()}.${ext}`;
+                const filePath = path.join(uploadsDir, fileName);
+                fs.writeFileSync(filePath, base64Data, 'base64');
+                comprovantePath = `/uploads/${fileName}`;
+            } else {
+                console.warn('Formato de imagem de comprovante inválido');
+            }
+        } catch (e) {
+            console.error('Erro ao salvar comprovante:', e.message);
+        }
+    }
+
+    // Ao cadastrar uma nova rota, o pagamento começa como 0. Apenas quando um
+    // administrador ou líder lançar o pagamento é que o valor será registrado.
+    db.run('INSERT INTO rotas (membro_nome, quantidade, data_entrega, status, comprovante_path) VALUES (?, ?, ?, ?, ?)',
+        [membro_nome, qtd, data_entrega, rotaStatus, comprovantePath], function(err) {
+            if (err) {
+                return res.status(500).json({ error: err.message });
+            }
+
+            const rotaId = this.lastID;
+            // Se a rota já nasce entregue, atualiza o estoque com o acréscimo de materiais proporcional à quantidade
+            if (rotaStatus === 'entregue') {
+                adicionarMateriaisPorRota(qtd).then(() => {
+                    res.json({
+                        message: 'Rota cadastrada com sucesso',
+                        id: rotaId
+                    });
+                }).catch(errStock => {
+                    console.error('Erro ao adicionar materiais após cadastro de rota:', errStock);
+                    res.json({
+                        message: 'Rota cadastrada com sucesso (erro ao atualizar estoque)',
+                        id: rotaId
+                    });
+                });
+            } else {
+                res.json({
+                    message: 'Rota cadastrada com sucesso',
+                    id: rotaId
+                });
+            }
+        }
+    );
+});
+
+// Excluir rota. Restrito a administradores, gerentes e líderes.
+app.delete('/api/rotas/:id', authenticateToken, (req, res) => {
+    const { id } = req.params;
+    const role = req.user && req.user.role;
+    if (role !== 'admin' && role !== 'gerente' && role !== 'lider') {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
+    db.run('DELETE FROM rotas WHERE id = ?', [id], function (err) {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        if (this.changes === 0) {
+            return res.status(404).json({ error: 'Rota não encontrada' });
+        }
+        res.json({ message: 'Rota removida com sucesso' });
+    });
+});
+
+// Lança pagamento de uma rota entregue. Somente administradores, gerentes ou líderes podem pagar.
+app.put('/api/rotas/:id/pagamento', authenticateToken, (req, res) => {
+    const { id } = req.params;
+    const role = req.user && req.user.role;
+    if (role !== 'admin' && role !== 'gerente' && role !== 'lider') {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
+    const { pagante_id } = req.body;
+    // Verifica se o pagante foi informado
+    if (!pagante_id) {
+        return res.status(400).json({ error: 'É necessário informar o líder responsável pelo pagamento' });
+    }
+    // Valida se o pagante existe e tem papel de líder
+    db.get('SELECT role FROM usuarios WHERE id = ?', [pagante_id], (errUser, userRow) => {
+        if (errUser) {
+            return res.status(500).json({ error: errUser.message });
+        }
+        if (!userRow || userRow.role !== 'lider') {
+            return res.status(400).json({ error: 'Usuário selecionado não é um líder válido' });
+        }
+        // Verifica se a rota existe, está entregue e ainda não foi paga
+        db.get('SELECT status, pagamento, quantidade FROM rotas WHERE id = ?', [id], (errSelect, row) => {
+            if (errSelect) {
+                return res.status(500).json({ error: errSelect.message });
+            }
+            if (!row) {
+                return res.status(404).json({ error: 'Rota não encontrada' });
+            }
+            if (row.status !== 'entregue') {
+                return res.status(400).json({ error: 'Pagamento só pode ser lançado para rotas entregues' });
+            }
+            if (row.pagamento && row.pagamento > 0) {
+                return res.status(400).json({ error: 'Pagamento já foi lançado para esta rota' });
+            }
+            // Multiplica o pagamento unitário (16 mil) pela quantidade entregue
+            const valorUnitario = 16000;
+            const valorPagamento = (row.quantidade || 1) * valorUnitario;
+            // Atualiza pagamento e registra o usuário que lançou o pagamento
+            db.run('UPDATE rotas SET pagamento = ?, pagamento_usuario_id = ? WHERE id = ?', [valorPagamento, pagante_id, id], function (errUpdate) {
+                if (errUpdate) {
+                    return res.status(500).json({ error: errUpdate.message });
+                }
+                res.json({ message: 'Pagamento lançado com sucesso', valor: valorPagamento });
+            });
+        });
+    });
+});
+
+// Atualizar rota (quantidade e status). Permite marcar uma rota pendente como entregue e informar a quantidade.
+app.put('/api/rotas/:id', (req, res) => {
+    const { id } = req.params;
+    const { quantidade, status } = req.body;
+
+    if (!quantidade || !status) {
+        return res.status(400).json({ error: 'Quantidade e status são obrigatórios' });
+    }
+
+    // Recupera status anterior da rota para evitar atualização duplicada de estoque
+    db.get('SELECT status FROM rotas WHERE id = ?', [id], (errSelect, row) => {
+        if (errSelect) {
+            return res.status(500).json({ error: errSelect.message });
+        }
+        if (!row) {
+            return res.status(404).json({ error: 'Rota não encontrada' });
+        }
+        const statusAnterior = row.status;
+        // Atualiza apenas quantidade e status. O pagamento deve ser lançado manualmente por rota entregue.
+        db.run('UPDATE rotas SET quantidade = ?, status = ? WHERE id = ?', [quantidade, status, id], function (err) {
+            if (err) {
+                return res.status(500).json({ error: err.message });
+            }
+            // Se a rota foi marcada como entregue agora e antes não era, incrementa estoque proporcional à quantidade
+            if (status === 'entregue' && statusAnterior !== 'entregue') {
+                const qtdEntrega = parseFloat(quantidade) || 1;
+                adicionarMateriaisPorRota(qtdEntrega).then(() => {
+                    res.json({ message: 'Rota atualizada com sucesso' });
+                }).catch(errStock => {
+                    console.error('Erro ao atualizar estoque após entrega de rota:', errStock);
+                    res.json({ message: 'Rota atualizada com sucesso (erro ao atualizar estoque)' });
+                });
+            } else {
+                res.json({ message: 'Rota atualizada com sucesso' });
+            }
+        });
+    });
+});
+
+/**
+ * Incrementa o estoque de matérias-primas em virtude de uma rota concluída.
+ * Para cada rota entregue, adiciona 160 unidades de Alumínio, Cobre, Emb Plástica e Ferro,
+ * e 13 unidades de Titânio. Retorna uma Promise para permitir encadeamento.
+ */
+function adicionarMateriaisPorRota(qtd) {
+    return new Promise((resolve, reject) => {
+        const quantidadeRota = parseFloat(qtd) || 1;
+        const updates = [
+            { nome: 'Alumínio', quantidade: 160 * quantidadeRota },
+            { nome: 'Cobre', quantidade: 160 * quantidadeRota },
+            { nome: 'Emb Plástica', quantidade: 160 * quantidadeRota },
+            { nome: 'Ferro', quantidade: 160 * quantidadeRota },
+            { nome: 'Titânio', quantidade: 13 * quantidadeRota }
+        ];
+        let pending = updates.length;
+        updates.forEach(item => {
+            db.run('UPDATE estoque SET quantidade = quantidade + ? WHERE tipo = "material" AND nome = ?', [item.quantidade, item.nome], function(err) {
+                if (err) {
+                    return reject(err);
+                }
+                pending--;
+                if (pending === 0) {
+                    resolve();
+                }
+            });
+        });
+    });
+}
+
+/**
+ * Subtrai do estoque de munições as quantidades especificadas de cada calibre.
+ * Este método é utilizado quando uma encomenda entra em status que reserva estoque
+ * (pronto ou entregue). Caso alguma munição não exista no estoque, a operação ainda
+ * prossegue para manter consistência de estoque. Retorna uma Promise para encadeamento.
+ * @param {number} q5 - Quantidade de 5mm a baixar
+ * @param {number} q9 - Quantidade de 9mm a baixar
+ * @param {number} q762 - Quantidade de 762mm a baixar
+ * @param {number} q12 - Quantidade de 12cbc a baixar
+ */
+function baixarEstoquePorEncomenda(q5, q9, q762, q12) {
+    return new Promise((resolve, reject) => {
+        const updates = [];
+        if (q5 > 0) updates.push({ nome: '5mm', quantidade: q5 });
+        if (q9 > 0) updates.push({ nome: '9mm', quantidade: q9 });
+        if (q762 > 0) updates.push({ nome: '762mm', quantidade: q762 });
+        if (q12 > 0) updates.push({ nome: '12cbc', quantidade: q12 });
+        if (updates.length === 0) {
+            return resolve();
+        }
+        let remaining = updates.length;
+        updates.forEach(item => {
+            db.run('UPDATE estoque SET quantidade = quantidade - ? WHERE tipo = "municao" AND nome = ?', [item.quantidade, item.nome], function(err) {
+                if (err) {
+                    return reject(err);
+                }
+                remaining--;
+                if (remaining === 0) {
+                    resolve();
+                }
+            });
+        });
+    });
+}
+
+/**
+ * Adiciona ao estoque de munições as quantidades especificadas de cada calibre.
+ * Este método é utilizado quando uma encomenda deixa de reservar estoque (status pronto/entregue
+ * para pendente/cancelado) ou quando suas quantidades diminuem. Retorna uma Promise.
+ * @param {number} q5 - Quantidade de 5mm a devolver
+ * @param {number} q9 - Quantidade de 9mm a devolver
+ * @param {number} q762 - Quantidade de 762mm a devolver
+ * @param {number} q12 - Quantidade de 12cbc a devolver
+ */
+function devolverEstoquePorEncomenda(q5, q9, q762, q12) {
+    return new Promise((resolve, reject) => {
+        const updates = [];
+        if (q5 > 0) updates.push({ nome: '5mm', quantidade: q5 });
+        if (q9 > 0) updates.push({ nome: '9mm', quantidade: q9 });
+        if (q762 > 0) updates.push({ nome: '762mm', quantidade: q762 });
+        if (q12 > 0) updates.push({ nome: '12cbc', quantidade: q12 });
+        if (updates.length === 0) {
+            return resolve();
+        }
+        let remaining = updates.length;
+        updates.forEach(item => {
+            db.run('UPDATE estoque SET quantidade = quantidade + ? WHERE tipo = "municao" AND nome = ?', [item.quantidade, item.nome], function(err) {
+                if (err) {
+                    return reject(err);
+                }
+                remaining--;
+                if (remaining === 0) {
+                    resolve();
+                }
+            });
+        });
+    });
+}
+
+/**
+ * Verifica as encomendas pendentes e marca como prontas se houver estoque suficiente para
+ * atendê-las. As encomendas são processadas em ordem de criação (mais antigas primeiro),
+ * garantindo que o estoque seja reservado primeiramente para quem pediu antes. Quando
+ * uma encomenda é marcada como pronta, as munições necessárias são imediatamente
+ * baixadas do estoque via `baixarEstoquePorEncomenda` para evitar que outras encomendas
+ * usem a mesma quantidade. Caso o estoque seja insuficiente para uma encomenda, a
+ * verificação é interrompida e nenhuma encomenda posterior é analisada.
+ *
+ * Retorna uma Promise que resolve quando a verificação estiver concluída. Erros são
+ * propagados via rejeição ou registrados no console.
+ */
+function verificarEncomendasProntas() {
+    return new Promise((resolve, reject) => {
+        // Recupera estoque atual de munições
+        db.all('SELECT nome, quantidade FROM estoque WHERE tipo = "municao"', (errStock, estoqueRows) => {
+            if (errStock) {
+                console.error('Erro ao obter estoque para verificação de encomendas prontas:', errStock);
+                return reject(errStock);
+            }
+            // Calcula quantidades de munições já reservadas por encomendas em status "pronto" (mas ainda não entregues).
+            const estoqueDisponivel = {};
+            estoqueRows.forEach(row => {
+                estoqueDisponivel[row.nome] = row.quantidade;
+            });
+            // Soma reservas atuais (encomendas com status = 'pronto')
+            db.all('SELECT municao_5mm, municao_9mm, municao_762mm, municao_12cbc FROM encomendas WHERE status = "pronto"', (errRes, reservas) => {
+                if (errRes) {
+                    console.error('Erro ao obter reservas de encomendas prontas:', errRes);
+                    return reject(errRes);
+                }
+                let reservado5 = 0, reservado9 = 0, reservado762 = 0, reservado12 = 0;
+                reservas.forEach(r => {
+                    reservado5 += r.municao_5mm || 0;
+                    reservado9 += r.municao_9mm || 0;
+                    reservado762 += r.municao_762mm || 0;
+                    reservado12 += r.municao_12cbc || 0;
+                });
+                estoqueDisponivel['5mm'] = (estoqueDisponivel['5mm'] || 0) - reservado5;
+                estoqueDisponivel['9mm'] = (estoqueDisponivel['9mm'] || 0) - reservado9;
+                estoqueDisponivel['762mm'] = (estoqueDisponivel['762mm'] || 0) - reservado762;
+                estoqueDisponivel['12cbc'] = (estoqueDisponivel['12cbc'] || 0) - reservado12;
+
+                // Recupera encomendas pendentes em ordem de criação
+                db.all('SELECT * FROM encomendas WHERE status = "pendente" ORDER BY data_criacao ASC', async (errOrders, pendentes) => {
+                    if (errOrders) {
+                        console.error('Erro ao obter encomendas pendentes:', errOrders);
+                        return reject(errOrders);
+                    }
+                    try {
+                        for (const pedido of pendentes) {
+                            const req5 = pedido.municao_5mm || 0;
+                            const req9 = pedido.municao_9mm || 0;
+                            const req762 = pedido.municao_762mm || 0;
+                            const req12 = pedido.municao_12cbc || 0;
+                            // Verifica disponibilidade considerando reservas
+                            if ((estoqueDisponivel['5mm'] || 0) >= req5 &&
+                                (estoqueDisponivel['9mm'] || 0) >= req9 &&
+                                (estoqueDisponivel['762mm'] || 0) >= req762 &&
+                                (estoqueDisponivel['12cbc'] || 0) >= req12) {
+                                // Marca encomenda como pronta (não remove estoque fisicamente)
+                                await new Promise((resUpd, rejUpd) => {
+                                    db.run('UPDATE encomendas SET status = ? WHERE id = ?', ['pronto', pedido.id], function(errUpd) {
+                                        if (errUpd) return rejUpd(errUpd);
+                                        resUpd();
+                                    });
+                                });
+                                // Atualiza estoque disponível em memória
+                                estoqueDisponivel['5mm'] = (estoqueDisponivel['5mm'] || 0) - req5;
+                                estoqueDisponivel['9mm'] = (estoqueDisponivel['9mm'] || 0) - req9;
+                                estoqueDisponivel['762mm'] = (estoqueDisponivel['762mm'] || 0) - req762;
+                                estoqueDisponivel['12cbc'] = (estoqueDisponivel['12cbc'] || 0) - req12;
+                            } else {
+                                // Parar se não houver estoque suficiente para esta encomenda
+                                break;
+                            }
+                        }
+                        resolve();
+                    } catch (errLoop) {
+                        console.error('Erro durante verificação de encomendas prontas:', errLoop);
+                        reject(errLoop);
+                    }
+                });
+            });
+        });
+    });
+}
+
+// Rotas de encomendas
+app.get('/api/encomendas', (req, res) => {
+    db.all('SELECT * FROM encomendas ORDER BY data_criacao DESC', (err, rows) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json(rows);
+    });
+});
+
+// Inserir encomenda
+// Para registrar qual usuário está criando a encomenda, esta rota utiliza o middleware de autenticação. O campo
+// "usuario" pode ser enviado no corpo da requisição; se não estiver presente, utiliza o usuário autenticado.
+app.post('/api/encomendas', authenticateToken, (req, res) => {
+    const {
+        cliente,
+        familia,
+        telefone_cliente,
+        municao_5mm,
+        municao_9mm,
+        municao_762mm,
+        municao_12cbc,
+        valor_total,
+        comissao,
+        status,
+        usuario
+    } = req.body;
+
+    if (!cliente || !familia) {
+        return res.status(400).json({ error: 'Cliente e família são obrigatórios' });
+    }
+
+    // Converte quantidades para números inteiros. Caso estejam indefinidas ou vazias, usa 0.
+    const qtd5 = parseInt(municao_5mm) || 0;
+    const qtd9 = parseInt(municao_9mm) || 0;
+    const qtd762 = parseInt(municao_762mm) || 0;
+    const qtd12 = parseInt(municao_12cbc) || 0;
+
+    // Preços fixos das munições conforme especificação do sistema.
+    const preco5 = 100;
+    const preco9 = 125;
+    const preco762 = 200;
+    const preco12 = 200;
+
+    // Calcula valor total e comissão (7%) caso não sejam fornecidos pelo cliente.
+    const calcTotal = qtd5 * preco5 + qtd9 * preco9 + qtd762 * preco762 + qtd12 * preco12;
+    const calcComissao = calcTotal * 0.07;
+
+    // Usa os valores enviados se existirem; caso contrário, utiliza os valores calculados.
+    const totalFinal = (valor_total !== undefined && valor_total !== null && valor_total !== '') ? parseFloat(valor_total) : calcTotal;
+    const comissaoFinal = (comissao !== undefined && comissao !== null && comissao !== '') ? parseFloat(comissao) : calcComissao;
+    // Determina o usuário responsável: prefere o campo enviado, senão usa o usuário autenticado
+    const usuarioFinal = usuario || (req.user && req.user.username) || null;
+
+    db.run(
+        `INSERT INTO encomendas 
+        (cliente, familia, telefone_cliente, municao_5mm, municao_9mm, municao_762mm, municao_12cbc, valor_total, comissao, status, usuario) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            cliente,
+            familia,
+            telefone_cliente || null,
+            qtd5,
+            qtd9,
+            qtd762,
+            qtd12,
+            totalFinal,
+            comissaoFinal,
+            status || 'pendente',
+            usuarioFinal
+        ],
+        function (err) {
+            if (err) {
+                return res.status(500).json({ error: err.message });
+            }
+            // Responde ao cliente imediatamente
+            res.json({
+                message: 'Encomenda cadastrada com sucesso',
+                id: this.lastID
+            });
+            // Após cadastrar, verifica se há estoque suficiente para marcar encomendas como prontas
+            verificarEncomendasProntas().catch(err => {
+                console.error('Erro ao verificar encomendas prontas após cadastro:', err);
+            });
+        }
+    );
+});
+
+// Atualiza uma encomenda existente. Recebe dados semelhantes ao cadastro
+app.put('/api/encomendas/:id', authenticateToken, (req, res) => {
+    const { id } = req.params;
+    const {
+        cliente,
+        familia,
+        telefone_cliente,
+        municao_5mm,
+        municao_9mm,
+        municao_762mm,
+        municao_12cbc,
+        valor_total,
+        comissao,
+        status,
+        usuario
+    } = req.body;
+
+    if (!cliente || !familia) {
+        return res.status(400).json({ error: 'Cliente e família são obrigatórios' });
+    }
+    // Converte quantidades para inteiros
+    const qtd5 = parseInt(municao_5mm) || 0;
+    const qtd9 = parseInt(municao_9mm) || 0;
+    const qtd762 = parseInt(municao_762mm) || 0;
+    const qtd12 = parseInt(municao_12cbc) || 0;
+    // Preços fixos
+    const preco5 = 100;
+    const preco9 = 125;
+    const preco762 = 200;
+    const preco12 = 200;
+    const calcTotal = qtd5 * preco5 + qtd9 * preco9 + qtd762 * preco762 + qtd12 * preco12;
+    const calcComissao = calcTotal * 0.07;
+    const totalFinal = (valor_total !== undefined && valor_total !== null && valor_total !== '') ? parseFloat(valor_total) : calcTotal;
+    const comissaoFinal = (comissao !== undefined && comissao !== null && comissao !== '') ? parseFloat(comissao) : calcComissao;
+    const newStatus = status || 'pendente';
+    const usuarioFinal = usuario || (req.user && req.user.username) || null;
+
+    // Verifica se o usuário tem permissão para atualizar para status cancelado
+    const userRole = req.user && req.user.role;
+    if (newStatus === 'cancelado') {
+        if (userRole !== 'admin' && userRole !== 'gerente' && userRole !== 'lider') {
+            return res.status(403).json({ error: 'Apenas cargos de liderança podem cancelar encomendas' });
+        }
+    }
+
+    // Função auxiliar para enviar uma resposta e, em seguida, disparar a verificação
+    // de encomendas prontas. Isso garante que, ao alterar o status de uma encomenda,
+    // o sistema reavalie se outras pendentes podem ser marcadas como prontas com
+    // base no estoque atualizado.
+    function sendAndVerify(payload) {
+        res.json(payload);
+        verificarEncomendasProntas().catch(err => {
+            console.error('Erro ao verificar encomendas prontas após atualização de encomenda:', err);
+        });
+    }
+
+    // Obtém status e quantidades atuais da encomenda
+    db.get('SELECT status, municao_5mm, municao_9mm, municao_762mm, municao_12cbc FROM encomendas WHERE id = ?', [id], (errSelect, row) => {
+        if (errSelect) {
+            return res.status(500).json({ error: errSelect.message });
+        }
+        if (!row) {
+            return res.status(404).json({ error: 'Encomenda não encontrada' });
+        }
+        const oldStatus = row.status;
+        const old5 = row.municao_5mm || 0;
+        const old9 = row.municao_9mm || 0;
+        const old762 = row.municao_762mm || 0;
+        const old12 = row.municao_12cbc || 0;
+
+        // Categorias de status que impactam o estoque: apenas "entregue".  A partir de agora,
+        // encomendas com status "pronto" não reduzem o estoque imediatamente; a baixa
+        // ocorre somente quando a encomenda é marcada como entregue.
+        const impactStatuses = ['entregue'];
+
+        // Função auxiliar para ajustar estoque após atualização
+        function afterUpdate() {
+            // Determina se precisa devolver ou baixar estoque baseado nos status
+            const oldInImpact = impactStatuses.includes(oldStatus);
+            const newInImpact = impactStatuses.includes(newStatus);
+            // Caso saindo de status que reservava estoque
+            if (oldInImpact && !newInImpact) {
+                // Devolve as quantidades antigas ao estoque e responde
+                devolverEstoquePorEncomenda(old5, old9, old762, old12)
+                    .then(() => sendAndVerify({ message: 'Encomenda atualizada com sucesso' }))
+                    .catch(err => {
+                        console.error('Erro ao devolver estoque:', err);
+                        sendAndVerify({ message: 'Encomenda atualizada com sucesso (erro ao devolver estoque)' });
+                    });
+                return;
+            }
+            // Caso entrando em status que reserva estoque
+            if (!oldInImpact && newInImpact) {
+                // Baixa as quantidades novas do estoque e responde
+                baixarEstoquePorEncomenda(qtd5, qtd9, qtd762, qtd12)
+                    .then(() => sendAndVerify({ message: 'Encomenda atualizada com sucesso' }))
+                    .catch(err => {
+                        console.error('Erro ao baixar estoque:', err);
+                        sendAndVerify({ message: 'Encomenda atualizada com sucesso (erro ao atualizar estoque)' });
+                    });
+                return;
+            }
+            // Caso mantenha status de impacto, ajustar diferenças nas quantidades
+            if (oldInImpact && newInImpact) {
+                const diff5 = qtd5 - old5;
+                const diff9 = qtd9 - old9;
+                const diff762 = qtd762 - old762;
+                const diff12 = qtd12 - old12;
+                // Ajusta apenas se houver diferença
+                const ajustes = [];
+                if (diff5 !== 0 || diff9 !== 0 || diff762 !== 0 || diff12 !== 0) {
+                    const promises = [];
+                    if (diff5 > 0) promises.push(baixarEstoquePorEncomenda(diff5, 0, 0, 0));
+                    if (diff5 < 0) promises.push(devolverEstoquePorEncomenda(-diff5, 0, 0, 0));
+                    if (diff9 > 0) promises.push(baixarEstoquePorEncomenda(0, diff9, 0, 0));
+                    if (diff9 < 0) promises.push(devolverEstoquePorEncomenda(0, -diff9, 0, 0));
+                    if (diff762 > 0) promises.push(baixarEstoquePorEncomenda(0, 0, diff762, 0));
+                    if (diff762 < 0) promises.push(devolverEstoquePorEncomenda(0, 0, -diff762, 0));
+                    if (diff12 > 0) promises.push(baixarEstoquePorEncomenda(0, 0, 0, diff12));
+                    if (diff12 < 0) promises.push(devolverEstoquePorEncomenda(0, 0, 0, -diff12));
+                    Promise.all(promises)
+                        .then(() => sendAndVerify({ message: 'Encomenda atualizada com sucesso' }))
+                        .catch(err => {
+                            console.error('Erro ao ajustar estoque:', err);
+                            sendAndVerify({ message: 'Encomenda atualizada com sucesso (erro ao ajustar estoque)' });
+                        });
+                } else {
+                    sendAndVerify({ message: 'Encomenda atualizada com sucesso' });
+                }
+                return;
+            }
+            // Se ambos não impactam, apenas retorna sucesso
+            sendAndVerify({ message: 'Encomenda atualizada com sucesso' });
+        }
+
+        // Atualiza a encomenda com novos valores
+        db.run(
+            `UPDATE encomendas SET cliente = ?, familia = ?, telefone_cliente = ?, municao_5mm = ?, municao_9mm = ?, municao_762mm = ?, municao_12cbc = ?, valor_total = ?, comissao = ?, status = ?, usuario = ? WHERE id = ?`,
+            [cliente, familia, telefone_cliente || null, qtd5, qtd9, qtd762, qtd12, totalFinal, comissaoFinal, newStatus, usuarioFinal, id],
+            function (errUpdate) {
+                if (errUpdate) {
+                    return res.status(500).json({ error: errUpdate.message });
+                }
+                if (this.changes === 0) {
+                    return res.status(404).json({ error: 'Encomenda não encontrada' });
+                }
+                // Após atualizar, ajusta estoque de acordo com mudanças de status ou quantidades
+                afterUpdate();
+            }
+        );
+    });
+});
+
+app.delete('/api/encomendas/:id', (req, res) => {
+    const { id } = req.params;
+    
+    db.run('DELETE FROM encomendas WHERE id = ?', [id], function(err) {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json({ message: 'Encomenda removida com sucesso' });
+    });
+});
+
+// Rotas de estoque
+app.get('/api/estoque', (req, res) => {
+    db.all('SELECT * FROM estoque ORDER BY tipo, nome', (err, rows) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json(rows);
+    });
+});
+
+// Atualizar estoque adicionando materiais ou munições. Disponível apenas para administradores, gerentes ou líderes.
+// Atualiza um item específico do estoque (quantidade). Apenas administradores, gerentes ou líderes podem editar o valor
+app.put('/api/estoque/:id', authenticateToken, (req, res) => {
+    const { id } = req.params;
+    const { quantidade } = req.body;
+    // Verifica permissões
+    const role = req.user && req.user.role;
+    if (role !== 'admin' && role !== 'gerente' && role !== 'lider') {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
+    const qtd = parseFloat(quantidade);
+    if (isNaN(qtd) || qtd < 0) {
+        return res.status(400).json({ error: 'Quantidade inválida' });
+    }
+    // Atualiza a quantidade do item
+    db.run('UPDATE estoque SET quantidade = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE id = ?', [qtd, id], function(err) {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        if (this.changes === 0) {
+            return res.status(404).json({ error: 'Item de estoque não encontrado' });
+        }
+        // Envia resposta ao cliente e verifica se encomendas pendentes podem ser prontas
+        res.json({ message: 'Item de estoque atualizado com sucesso' });
+        verificarEncomendasProntas().catch(err => {
+            console.error('Erro ao verificar encomendas prontas após atualização de item de estoque:', err);
+        });
+    });
+});
+
+// Atualizar estoque adicionando materiais ou munições. Disponível apenas para administradores, gerentes ou líderes.
+app.post('/api/estoque', authenticateToken, (req, res) => {
+    const { tipo, item, quantidade, baixarMateriais } = req.body;
+
+    // Validação simples
+    if (!tipo || !item || !quantidade) {
+        return res.status(400).json({ error: 'Tipo, item e quantidade são obrigatórios' });
+    }
+
+    const role = req.user && req.user.role;
+    // Verifica se o usuário possui permissão para alterar estoque
+    if (role !== 'admin' && role !== 'gerente' && role !== 'lider') {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
+
+    const qtd = parseFloat(quantidade);
+    if (isNaN(qtd) || qtd <= 0) {
+        return res.status(400).json({ error: 'Quantidade inválida' });
+    }
+
+    // Inserir ou atualizar materiais
+    if (tipo === 'material') {
+        // Adiciona a quantidade ao material especificado
+        db.run('UPDATE estoque SET quantidade = quantidade + ? WHERE tipo = ? AND nome = ?',
+            [qtd, 'material', item], function (err) {
+                if (err) {
+                    return res.status(500).json({ error: err.message });
+                }
+                // Se nenhuma linha foi atualizada, retorna erro
+                if (this.changes === 0) {
+                    return res.status(404).json({ error: 'Material não encontrado' });
+                }
+                // Responde ao cliente e executa verificação de encomendas prontas
+                res.json({ message: 'Estoque de material atualizado com sucesso' });
+                verificarEncomendasProntas().catch(err => {
+                    console.error('Erro ao verificar encomendas prontas após atualização de material:', err);
+                });
+            });
+        return;
+    }
+
+    if (tipo === 'municao') {
+        // Atualiza a quantidade de munições
+        db.run('UPDATE estoque SET quantidade = quantidade + ? WHERE tipo = ? AND nome = ?',
+            [qtd, 'municao', item], function (err) {
+                if (err) {
+                    return res.status(500).json({ error: err.message });
+                }
+                if (this.changes === 0) {
+                    return res.status(404).json({ error: 'Tipo de munição não encontrado' });
+                }
+                // Se for solicitado baixar materiais, calcula consumo de matérias-primas
+                if (baixarMateriais && String(baixarMateriais).toLowerCase() === 'sim') {
+                    // Cada 200 munições utilizam 55 unidades de quatro materiais e 2 unidades de titânio.
+                    // Portanto, a quantidade consumida por munição é 55/200 para os quatro materiais
+                    // e 2/200 para titânio.
+                    const consumPerBullet = 55 / 200.0;
+                    const consumTitanio = 2 / 200.0;
+                    const totalMaterial = consumPerBullet * qtd;
+                    const totalTitanio = consumTitanio * qtd;
+                    const materiaisParaBaixar = [
+                        { nome: 'Alumínio', quantidade: totalMaterial },
+                        { nome: 'Cobre', quantidade: totalMaterial },
+                        { nome: 'Emb Plástica', quantidade: totalMaterial },
+                        { nome: 'Ferro', quantidade: totalMaterial },
+                        { nome: 'Titânio', quantidade: totalTitanio }
+                    ];
+                    // Antes de subtrair, verifica se há material suficiente
+                    db.all('SELECT nome, quantidade FROM estoque WHERE tipo = "material"', (errMat, rows) => {
+                        if (errMat) {
+                            console.error('Erro ao consultar materiais:', errMat.message);
+                            // Continua a operação, mas não baixa materiais
+                            finalizeUpdate();
+                            return;
+                        }
+                        const faltantes = [];
+                        materiaisParaBaixar.forEach(mat => {
+                            const row = rows.find(r => r.nome === mat.nome);
+                            if (!row || row.quantidade < mat.quantidade) {
+                                faltantes.push(mat.nome);
+                            }
+                        });
+                        if (faltantes.length > 0) {
+                            // Reverte a soma de munições já realizada
+                            db.run('UPDATE estoque SET quantidade = quantidade - ? WHERE tipo = "municao" AND nome = ?', [qtd, item], (rollbackErr) => {
+                                if (rollbackErr) {
+                                    console.error('Erro ao reverter atualização de munições:', rollbackErr.message);
+                                }
+                                return res.status(400).json({ error: 'Estoque insuficiente para os materiais: ' + faltantes.join(', ') });
+                            });
+                        } else {
+                            // Subtrai quantidades dos materiais
+                            let pending = materiaisParaBaixar.length;
+                            materiaisParaBaixar.forEach(mat => {
+                                db.run('UPDATE estoque SET quantidade = quantidade - ? WHERE tipo = "material" AND nome = ?',
+                                    [mat.quantidade, mat.nome], function (err) {
+                                        if (err) {
+                                            console.error('Erro ao atualizar material', mat.nome, err.message);
+                                        }
+                                        pending--;
+                                        if (pending === 0) {
+                                            // Todos materiais atualizados
+                                            finalizeUpdate();
+                                        }
+                                    }
+                                );
+                            });
+                        }
+                    });
+                } else {
+                    // Não baixar materiais
+                    finalizeUpdate();
+                }
+
+                function finalizeUpdate() {
+                    // Envia a resposta ao cliente
+                    res.json({ message: 'Estoque de munição atualizado com sucesso' });
+                    // Após atualizar o estoque, verifica se encomendas pendentes podem ser marcadas como prontas
+                    verificarEncomendasProntas().catch(err => {
+                        console.error('Erro ao verificar encomendas prontas após atualização de munições:', err);
+                    });
+                    return;
+                }
+            });
+        return;
+    }
+
+    // Tipo desconhecido
+    return res.status(400).json({ error: 'Tipo de item inválido' });
+});
+
+// Endpoint para retirar itens do estoque. Destinado a correções de lançamentos errados. Somente administradores,
+// gerentes ou líderes podem realizar retiradas.
+app.post('/api/estoque/retirar', authenticateToken, (req, res) => {
+    const { tipo, item, quantidade } = req.body;
+    // Verifica permissões
+    const role = req.user && req.user.role;
+    if (role !== 'admin' && role !== 'gerente' && role !== 'lider') {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
+    if (!tipo || !item || !quantidade) {
+        return res.status(400).json({ error: 'Tipo, item e quantidade são obrigatórios' });
+    }
+    const qtd = parseFloat(quantidade);
+    if (isNaN(qtd) || qtd <= 0) {
+        return res.status(400).json({ error: 'Quantidade inválida' });
+    }
+    // Atualiza o estoque subtraindo a quantidade informada
+    db.run('UPDATE estoque SET quantidade = quantidade - ? WHERE tipo = ? AND nome = ?', [qtd, tipo, item], function (err) {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        if (this.changes === 0) {
+            return res.status(404).json({ error: 'Item de estoque não encontrado' });
+        }
+        res.json({ message: 'Retirada realizada com sucesso' });
+    });
+});
+
+// Endpoint para saída avulsa de estoque, para destinar materiais ou munições a membros. Apenas líderes podem realizar.
+app.post('/api/estoque/saida-avulsa', authenticateToken, (req, res) => {
+    const { tipo, item, quantidade, destinos } = req.body;
+    const role = req.user && req.user.role;
+    if (role !== 'lider') {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
+    if (!tipo || !item || !quantidade || !destinos) {
+        return res.status(400).json({ error: 'Tipo, item, quantidade e destinos são obrigatórios' });
+    }
+    const qtd = parseFloat(quantidade);
+    if (isNaN(qtd) || qtd <= 0) {
+        return res.status(400).json({ error: 'Quantidade inválida' });
+    }
+    // Normaliza destinos: pode vir como array ou string
+    let destinosArray = [];
+    if (Array.isArray(destinos)) {
+        destinosArray = destinos;
+    } else if (typeof destinos === 'string') {
+        destinosArray = destinos.split(',').map(s => s.trim()).filter(Boolean);
+    }
+    // Verificar estoque disponível
+    db.get('SELECT quantidade FROM estoque WHERE tipo = ? AND nome = ?', [tipo, item], (errSel, rowSel) => {
+        if (errSel) {
+            return res.status(500).json({ error: errSel.message });
+        }
+        if (!rowSel || rowSel.quantidade < qtd) {
+            return res.status(400).json({ error: 'Estoque insuficiente para realizar a saída' });
+        }
+        // Atualiza estoque subtraindo a quantidade
+        db.run('UPDATE estoque SET quantidade = quantidade - ? WHERE tipo = ? AND nome = ?', [qtd, tipo, item], function (errUp) {
+            if (errUp) {
+                return res.status(500).json({ error: errUp.message });
+            }
+            // Registra saída avulsa
+            db.run('INSERT INTO saidas_avulsas (tipo, item, quantidade, retirado_por, destinos) VALUES (?, ?, ?, ?, ?)',
+                [tipo, item, qtd, req.user.username || '', destinosArray.join(',')], function (errIns) {
+                    if (errIns) {
+                        return res.status(500).json({ error: errIns.message });
+                    }
+                    res.json({ message: 'Saída avulsa registrada com sucesso' });
+                });
+        });
+    });
+});
+
+// Permite fabricar munições em lotes. Rota protegida: apenas administradores, gerentes ou líderes.
+app.post('/api/estoque/fabricar', authenticateToken, (req, res) => {
+    const { tipo_municao, lotes } = req.body;
+
+    if (!tipo_municao || !lotes) {
+        return res.status(400).json({ error: 'Tipo de munição e quantidade de lotes são obrigatórios' });
+    }
+
+    // Verifica permissão do usuário
+    const role = req.user && req.user.role;
+    if (role !== 'admin' && role !== 'gerente' && role !== 'lider') {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
+
+    const quantidade = parseFloat(lotes) * 200; // 1 lote = 200 munições
+    if (isNaN(quantidade) || quantidade <= 0) {
+        return res.status(400).json({ error: 'Quantidade de lotes inválida' });
+    }
+
+    // Atualizar estoque de munições
+    db.run('UPDATE estoque SET quantidade = quantidade + ? WHERE tipo = "municao" AND nome = ?',
+        [quantidade, tipo_municao], function (err) {
+            if (err) {
+                return res.status(500).json({ error: err.message });
+            }
+            // Se nenhuma linha foi atualizada, o tipo de munição não existe
+            if (this.changes === 0) {
+                return res.status(404).json({ error: 'Tipo de munição não encontrado' });
+            }
+            res.json({
+                message: `${quantidade} munições ${tipo_municao} fabricadas com sucesso`
+            });
+        });
+});
+
+// Rotas de imagens
+app.get('/api/imagens', (req, res) => {
+    db.all('SELECT * FROM imagens ORDER BY data_upload DESC', (err, rows) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json(rows);
+    });
+});
+
+// Listar usuários (somente id, username e role). Útil para preencher selects de responsável por encomendas.
+app.get('/api/usuarios', (req, res) => {
+    db.all('SELECT id, username, role FROM usuarios ORDER BY username', (err, rows) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        // Não retornamos senha nem dados sensíveis
+        res.json(rows);
+    });
+});
+
+// Lista usuários pendentes de aprovação (ativo = 0).
+// Requer autenticação e cargos de liderança (admin, gerente ou lider).
+app.get('/api/usuarios/pendentes', authenticateToken, (req, res) => {
+    const role = req.user && req.user.role;
+    if (role !== 'admin' && role !== 'gerente' && role !== 'lider') {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
+    // Busca usuários com ativo = 0 e tenta unir com membros através da coluna usuario_id
+    const query = `
+        SELECT u.id AS user_id, u.username, u.role, u.data_criacao AS user_data_criacao,
+               m.id AS membro_id, m.nome, m.rg, m.telefone, m.cargo, m.data_criacao AS membro_data_criacao
+        FROM usuarios u
+        LEFT JOIN membros m ON m.usuario_id = u.id
+        WHERE u.ativo = 0
+        ORDER BY u.data_criacao ASC
+    `;
+    db.all(query, [], (err, rows) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json(rows);
+    });
+});
+
+// Ativar um usuário pendente e, opcionalmente, atualizar seu cargo/role.
+// Recebe no body { role, cargo } para definir o papel do usuário e o cargo no membro.
+app.put('/api/usuarios/:id/ativar', authenticateToken, (req, res) => {
+    const roleAtual = req.user && req.user.role;
+    if (roleAtual !== 'admin' && roleAtual !== 'gerente' && roleAtual !== 'lider') {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
+    const userId = req.params.id;
+    const { role, cargo } = req.body;
+    // Verifica se o usuário existe e está pendente
+    db.get('SELECT * FROM usuarios WHERE id = ?', [userId], (err, usuario) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        if (!usuario) {
+            return res.status(404).json({ error: 'Usuário não encontrado' });
+        }
+        if (usuario.ativo) {
+            return res.status(400).json({ error: 'Usuário já está ativo' });
+        }
+        // Define novo role ou mantém 'membro' se não enviado
+        const novoRole = role || usuario.role || 'membro';
+        const novoCargo = cargo || 'membro';
+        // Atualiza usuário para ativo e role
+        db.run('UPDATE usuarios SET ativo = 1, role = ? WHERE id = ?', [novoRole, userId], function(err2) {
+            if (err2) {
+                return res.status(500).json({ error: err2.message });
+            }
+            // Atualiza membro associado via usuario_id
+            db.run('UPDATE membros SET ativo = 1, cargo = ? WHERE usuario_id = ?', [novoCargo, userId], function(err3) {
+                if (err3) {
+                    return res.status(500).json({ error: err3.message });
+                }
+                res.json({ message: 'Usuário ativado com sucesso' });
+            });
+        });
+    });
+});
+
+// Rotas de famílias
+// Listar famílias
+app.get('/api/familias', (req, res) => {
+    db.all('SELECT * FROM familias ORDER BY nome', (err, rows) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json(rows);
+    });
+});
+
+// Cadastrar família (apenas para gerentes/admin)
+app.post('/api/familias', authenticateToken, (req, res) => {
+    const { nome } = req.body;
+
+    if (!nome) {
+        return res.status(400).json({ error: 'Nome da família é obrigatório' });
+    }
+
+    // Verifica se o usuário possui permissões de gerente/admin
+    const role = req.user && req.user.role;
+    // Permitir que administradores, gerentes e líderes cadastrem famílias
+    if (role !== 'admin' && role !== 'gerente' && role !== 'lider') {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
+
+    db.run('INSERT INTO familias (nome) VALUES (?)', [nome], function(err) {
+        if (err) {
+            if (err.message.includes('UNIQUE')) {
+                return res.status(400).json({ error: 'Família já cadastrada' });
+            }
+            return res.status(500).json({ error: err.message });
+        }
+        res.json({ id: this.lastID, nome });
+    });
+});
+
+// Rotas de relatórios
+app.get('/api/relatorios/geral', (req, res) => {
+    const { periodo } = req.query;
+    
+    // Implementar lógica de relatórios baseada no período
+    res.json({
+        membros: 0,
+        rotas: 0,
+        encomendas: 0,
+        vendas: 0,
+        comissoes: 0
+    });
+});
+
+// Rota principal
+app.get('/', (req, res) => {
+    res.redirect('/static/login_simple.html');
+});
+
+// Inicializar banco e servidor
+async function startServer() {
+    try {
+        await initDatabase();
+
+        // Após inicializar o banco de dados, gera rotas pendentes para a próxima semana.
+        await generateRotasParaProximaSemana();
+        
+        app.listen(PORT, '0.0.0.0', () => {
+            console.log(`🚀 Servidor rodando na porta ${PORT}`);
+            console.log(`📱 Acesse: http://localhost:${PORT}/static/login_simple.html`);
+            console.log(`👤 Usuário: tofu | Senha: tofu$2025`);
+        });
+    } catch (error) {
+        console.error('❌ Erro ao inicializar servidor:', error);
+        process.exit(1);
+    }
+}
+
+startServer();
+
