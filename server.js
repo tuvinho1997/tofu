@@ -199,6 +199,14 @@ function initDatabase() {
                 data_criacao DATETIME DEFAULT CURRENT_TIMESTAMP
             )`);
 
+            // Tabela de configuração geral. Armazena chaves de configuração como a taxa de comissão.
+            db.run(`CREATE TABLE IF NOT EXISTS config (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )`);
+            // Insere taxa de comissão padrão (7%) se ainda não existir
+            db.run('INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)', ['commission_rate', '0.07']);
+
             // Criar usuário admin padrão
             const hashedPassword = bcrypt.hashSync('tofu$2025', 10);
             db.run(`INSERT OR IGNORE INTO usuarios (username, password, role) VALUES (?, ?, ?)`, 
@@ -241,6 +249,24 @@ function initDatabase() {
 
             console.log('✅ Banco de dados inicializado com sucesso!');
             resolve();
+        });
+    });
+}
+
+// Recupera a taxa de comissão atual da tabela de configuração. Se o valor
+// não estiver definido, retorna o padrão de 7%.
+function getCommissionRate() {
+    return new Promise((resolve, reject) => {
+        db.get('SELECT value FROM config WHERE key = ?', ['commission_rate'], (err, row) => {
+            if (err) {
+                return reject(err);
+            }
+            if (row && row.value !== undefined && row.value !== null) {
+                const rate = parseFloat(row.value);
+                resolve(isNaN(rate) ? 0.07 : rate);
+            } else {
+                resolve(0.07);
+            }
         });
     });
 }
@@ -879,7 +905,7 @@ app.get('/api/encomendas', (req, res) => {
 // Inserir encomenda
 // Para registrar qual usuário está criando a encomenda, esta rota utiliza o middleware de autenticação. O campo
 // "usuario" pode ser enviado no corpo da requisição; se não estiver presente, utiliza o usuário autenticado.
-app.post('/api/encomendas', authenticateToken, (req, res) => {
+app.post('/api/encomendas', authenticateToken, async (req, res) => {
     const {
         cliente,
         familia,
@@ -910,9 +936,17 @@ app.post('/api/encomendas', authenticateToken, (req, res) => {
     const preco762 = 200;
     const preco12 = 200;
 
-    // Calcula valor total e comissão (7%) caso não sejam fornecidos pelo cliente.
+    // Calcula valor total
     const calcTotal = qtd5 * preco5 + qtd9 * preco9 + qtd762 * preco762 + qtd12 * preco12;
-    const calcComissao = calcTotal * 0.07;
+    // Obtém a taxa de comissão configurada dinamicamente. Em caso de erro,
+    // utiliza a taxa padrão de 7%.
+    let commissionRate = 0.07;
+    try {
+        commissionRate = await getCommissionRate();
+    } catch (e) {
+        console.error('Erro ao obter taxa de comissão:', e);
+    }
+    const calcComissao = calcTotal * commissionRate;
 
     // Usa os valores enviados se existirem; caso contrário, utiliza os valores calculados.
     const totalFinal = (valor_total !== undefined && valor_total !== null && valor_total !== '') ? parseFloat(valor_total) : calcTotal;
@@ -966,7 +1000,7 @@ app.post('/api/encomendas', authenticateToken, (req, res) => {
 });
 
 // Atualiza uma encomenda existente. Recebe dados semelhantes ao cadastro
-app.put('/api/encomendas/:id', authenticateToken, (req, res) => {
+app.put('/api/encomendas/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const {
         cliente,
@@ -996,7 +1030,14 @@ app.put('/api/encomendas/:id', authenticateToken, (req, res) => {
     const preco762 = 200;
     const preco12 = 200;
     const calcTotal = qtd5 * preco5 + qtd9 * preco9 + qtd762 * preco762 + qtd12 * preco12;
-    const calcComissao = calcTotal * 0.07;
+    // Obtém taxa de comissão dinâmica. Em caso de erro, utiliza 7%.
+    let commissionRateUpd = 0.07;
+    try {
+        commissionRateUpd = await getCommissionRate();
+    } catch (e) {
+        console.error('Erro ao obter taxa de comissão:', e);
+    }
+    const calcComissao = calcTotal * commissionRateUpd;
     const totalFinal = (valor_total !== undefined && valor_total !== null && valor_total !== '') ? parseFloat(valor_total) : calcTotal;
     const comissaoFinal = (comissao !== undefined && comissao !== null && comissao !== '') ? parseFloat(comissao) : calcComissao;
     const newStatus = status || 'pendente';
@@ -1149,14 +1190,15 @@ app.get('/api/estoque', (req, res) => {
     });
 });
 
-// Atualizar estoque adicionando materiais ou munições. Disponível apenas para administradores, gerentes ou líderes.
+// Atualizar estoque adicionando materiais ou munições. Disponível apenas para administradores ou líderes.
 // Atualiza um item específico do estoque (quantidade). Apenas administradores, gerentes ou líderes podem editar o valor
 app.put('/api/estoque/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
     const { quantidade } = req.body;
     // Verifica permissões
     const role = req.user && req.user.role;
-    if (role !== 'admin' && role !== 'gerente' && role !== 'lider') {
+    // Apenas administradores ou líderes podem editar itens do estoque
+    if (role !== 'admin' && role !== 'lider') {
         return res.status(403).json({ error: 'Acesso negado' });
     }
     const qtd = parseFloat(quantidade);
@@ -1179,7 +1221,7 @@ app.put('/api/estoque/:id', authenticateToken, (req, res) => {
     });
 });
 
-// Atualizar estoque adicionando materiais ou munições. Disponível apenas para administradores, gerentes ou líderes.
+// Atualizar estoque adicionando materiais ou munições. Disponível apenas para administradores ou líderes.
 app.post('/api/estoque', authenticateToken, (req, res) => {
     const { tipo, item, quantidade, baixarMateriais } = req.body;
 
@@ -1189,8 +1231,8 @@ app.post('/api/estoque', authenticateToken, (req, res) => {
     }
 
     const role = req.user && req.user.role;
-    // Verifica se o usuário possui permissão para alterar estoque
-    if (role !== 'admin' && role !== 'gerente' && role !== 'lider') {
+    // Apenas administradores ou líderes podem alterar o estoque (adicionar materiais/munições)
+    if (role !== 'admin' && role !== 'lider') {
         return res.status(403).json({ error: 'Acesso negado' });
     }
 
@@ -1310,13 +1352,14 @@ app.post('/api/estoque', authenticateToken, (req, res) => {
     return res.status(400).json({ error: 'Tipo de item inválido' });
 });
 
-// Endpoint para retirar itens do estoque. Destinado a correções de lançamentos errados. Somente administradores,
-// gerentes ou líderes podem realizar retiradas.
+// Endpoint para retirar itens do estoque. Destinado a correções de lançamentos errados. Somente administradores
+// ou líderes podem realizar retiradas.
 app.post('/api/estoque/retirar', authenticateToken, (req, res) => {
     const { tipo, item, quantidade } = req.body;
     // Verifica permissões
     const role = req.user && req.user.role;
-    if (role !== 'admin' && role !== 'gerente' && role !== 'lider') {
+    // Apenas administradores ou líderes podem retirar itens do estoque
+    if (role !== 'admin' && role !== 'lider') {
         return res.status(403).json({ error: 'Acesso negado' });
     }
     if (!tipo || !item || !quantidade) {
@@ -1384,7 +1427,38 @@ app.post('/api/estoque/saida-avulsa', authenticateToken, (req, res) => {
     });
 });
 
-// Permite fabricar munições em lotes. Rota protegida: apenas administradores, gerentes ou líderes.
+// === Configurações do sistema ===
+// Retorna a taxa de comissão atual
+app.get('/api/config/commission-rate', (req, res) => {
+    db.get('SELECT value FROM config WHERE key = ?', ['commission_rate'], (err, row) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        const rate = row ? parseFloat(row.value) : 0.07;
+        res.json({ rate });
+    });
+});
+
+// Atualiza a taxa de comissão. Somente administradores ou líderes podem definir o percentual.
+app.put('/api/config/commission-rate', authenticateToken, (req, res) => {
+    const role = req.user && req.user.role;
+    if (role !== 'admin' && role !== 'lider') {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
+    const { rate } = req.body;
+    const valor = parseFloat(rate);
+    if (isNaN(valor) || valor < 0 || valor > 1) {
+        return res.status(400).json({ error: 'Taxa inválida. Forneça um número entre 0 e 1.' });
+    }
+    db.run('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)', ['commission_rate', String(valor)], function(err) {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json({ message: 'Taxa de comissão atualizada com sucesso', rate: valor });
+    });
+});
+
+// Permite fabricar munições em lotes. Rota protegida: apenas administradores ou líderes.
 app.post('/api/estoque/fabricar', authenticateToken, (req, res) => {
     const { tipo_municao, lotes } = req.body;
 
@@ -1394,7 +1468,8 @@ app.post('/api/estoque/fabricar', authenticateToken, (req, res) => {
 
     // Verifica permissão do usuário
     const role = req.user && req.user.role;
-    if (role !== 'admin' && role !== 'gerente' && role !== 'lider') {
+    // Apenas administradores ou líderes podem fabricar munições
+    if (role !== 'admin' && role !== 'lider') {
         return res.status(403).json({ error: 'Acesso negado' });
     }
 
