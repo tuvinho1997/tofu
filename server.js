@@ -400,6 +400,45 @@ app.post('/api/auth/login', (req, res) => {
             { expiresIn: '24h' }
         );
 
+            // Tabela de inventário da família. Armazena itens especiais (produtos
+            // comprados, produtos para roubo, produtos de ação fechada e
+            // produtos de ação) separados por categoria e subcategoria.  Cada
+            // item possui uma quantidade e um preço unitário.  A chave
+            // (categoria, subcategoria) é única para evitar duplicatas.
+            db.run(`CREATE TABLE IF NOT EXISTS inventario_familia (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                categoria TEXT NOT NULL,
+                subcategoria TEXT NOT NULL,
+                quantidade INTEGER DEFAULT 0,
+                preco REAL DEFAULT 0,
+                data_atualizacao DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`);
+            db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_inventario_cat_sub ON inventario_familia(categoria, subcategoria)');
+
+            // Tabela de requisições de itens do inventário da família.  Cada
+            // requisição é criada por um membro ou gerente e pode ser
+            // aprovada/rejeitada por um líder.  Quando aprovada e
+            // posteriormente marcada como entregue, a quantidade é baixada do
+            // inventário.  Caso seja cancelada após entrega, a quantidade é
+            // devolvida ao inventário.
+            db.run(`CREATE TABLE IF NOT EXISTS requisicoes_familia (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_id INTEGER NOT NULL,
+                membro_id INTEGER,
+                solicitante_nome TEXT,
+                solicitante_cargo TEXT,
+                solicitante_rg TEXT,
+                solicitante_telefone TEXT,
+                quantidade INTEGER NOT NULL,
+                status TEXT DEFAULT 'pendente',
+                lider_id INTEGER,
+                data_solicitacao DATETIME DEFAULT CURRENT_TIMESTAMP,
+                data_resposta DATETIME,
+                data_entrega DATETIME,
+                FOREIGN KEY (item_id) REFERENCES inventario_familia(id),
+                FOREIGN KEY (membro_id) REFERENCES membros(id),
+                FOREIGN KEY (lider_id) REFERENCES usuarios(id)
+            )`);
         res.json({
             message: 'Login realizado com sucesso',
             token: token,
@@ -1637,6 +1676,421 @@ app.post('/api/familias', authenticateToken, (req, res) => {
             return res.status(500).json({ error: err.message });
         }
         res.json({ id: this.lastID, nome });
+    });
+});
+
+// ===========================================================================
+// Rotas para Inventário da Família e Requisições
+// ===========================================================================
+
+/**
+ * Obtém todos os itens do inventário da família. Qualquer usuário logado pode
+ * consultar esta rota. Os itens são retornados como um array de objetos com
+ * campos: id, categoria, subcategoria, quantidade e preco.
+ */
+app.get('/api/inventario-familia', authenticateToken, (req, res) => {
+    db.all('SELECT * FROM inventario_familia ORDER BY categoria, subcategoria', (err, rows) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json(rows);
+    });
+});
+
+/**
+ * Cria um novo item no inventário da família ou atualiza a quantidade de um
+ * item existente. Apenas administradores ou líderes podem adicionar ou
+ * modificar itens no inventário da família. O corpo da requisição deve
+ * conter: categoria, subcategoria, quantidade e opcionalmente preco. Se
+ * houver um item já cadastrado com a mesma combinação de categoria e
+ * subcategoria, a quantidade será incrementada; caso contrário, o item será
+ * criado. Retorna os dados do item inserido/atualizado.
+ */
+app.post('/api/inventario-familia', authenticateToken, (req, res) => {
+    const role = req.user && req.user.role;
+    if (role !== 'admin' && role !== 'lider') {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
+    const { categoria, subcategoria, quantidade, preco } = req.body;
+    const qtd = parseInt(quantidade);
+    const price = preco !== undefined && preco !== null ? parseFloat(preco) : null;
+    if (!categoria || !subcategoria || isNaN(qtd) || qtd < 0) {
+        return res.status(400).json({ error: 'Categoria, subcategoria e quantidade válidas são obrigatórias' });
+    }
+    // Tenta atualizar um item existente; se nenhum item for atualizado,
+    // insere um novo registro.
+    db.get('SELECT * FROM inventario_familia WHERE categoria = ? AND subcategoria = ?', [categoria, subcategoria], (err, existing) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        if (existing) {
+            const newQty = existing.quantidade + qtd;
+            const newPrice = price !== null ? price : existing.preco;
+            db.run('UPDATE inventario_familia SET quantidade = ?, preco = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE id = ?', [newQty, newPrice, existing.id], function (updateErr) {
+                if (updateErr) {
+                    return res.status(500).json({ error: updateErr.message });
+                }
+                db.get('SELECT * FROM inventario_familia WHERE id = ?', [existing.id], (selErr, updated) => {
+                    if (selErr) {
+                        return res.status(500).json({ error: selErr.message });
+                    }
+                    return res.json(updated);
+                });
+            });
+        } else {
+            const insertPrice = price !== null ? price : 0;
+            db.run('INSERT INTO inventario_familia (categoria, subcategoria, quantidade, preco) VALUES (?, ?, ?, ?)', [categoria, subcategoria, qtd, insertPrice], function (insertErr) {
+                if (insertErr) {
+                    return res.status(500).json({ error: insertErr.message });
+                }
+                db.get('SELECT * FROM inventario_familia WHERE id = ?', [this.lastID], (selErr, item) => {
+                    if (selErr) {
+                        return res.status(500).json({ error: selErr.message });
+                    }
+                    res.json(item);
+                });
+            });
+        }
+    });
+});
+
+/**
+ * Atualiza a quantidade e/ou o preço de um item existente no inventário da
+ * família. Apenas administradores ou líderes podem realizar esta operação.
+ * A rota aceita campos opcionais `quantidade` e `preco`; se um dos campos
+ * não for fornecido, permanece inalterado. O status atual do item é
+ * retornado após a atualização.
+ */
+app.put('/api/inventario-familia/:id', authenticateToken, (req, res) => {
+    const role = req.user && req.user.role;
+    if (role !== 'admin' && role !== 'lider') {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
+    const id = parseInt(req.params.id);
+    const qtd = req.body.quantidade !== undefined ? parseInt(req.body.quantidade) : null;
+    const price = req.body.preco !== undefined ? parseFloat(req.body.preco) : null;
+    if (isNaN(id)) {
+        return res.status(400).json({ error: 'ID inválido' });
+    }
+    // Verifica se o item existe
+    db.get('SELECT * FROM inventario_familia WHERE id = ?', [id], (err, existing) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        if (!existing) {
+            return res.status(404).json({ error: 'Item não encontrado' });
+        }
+        const newQty = qtd !== null ? qtd : existing.quantidade;
+        const newPrice = price !== null ? price : existing.preco;
+        db.run('UPDATE inventario_familia SET quantidade = ?, preco = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE id = ?', [newQty, newPrice, id], function (updateErr) {
+            if (updateErr) {
+                return res.status(500).json({ error: updateErr.message });
+            }
+            db.get('SELECT * FROM inventario_familia WHERE id = ?', [id], (selErr, updated) => {
+                if (selErr) {
+                    return res.status(500).json({ error: selErr.message });
+                }
+                res.json(updated);
+            });
+        });
+    });
+});
+
+/**
+ * Cria uma requisição de item do inventário da família. Apenas membros ou
+ * gerentes podem criar requisições; líderes e administradores não devem
+ * solicitar itens desta forma. O corpo da requisição deve conter
+ * `item_id` e `quantidade`. O servidor registra informações do
+ * solicitante (nome, cargo, RG e telefone) a partir da tabela de membros
+ * associada ao usuário logado. Se o usuário não tiver um cadastro de
+ * membro, os campos de contato devem ser fornecidos manualmente.
+ */
+app.post('/api/requisicoes-familia', authenticateToken, (req, res) => {
+    const { item_id, quantidade, solicitante_nome, solicitante_cargo, solicitante_rg, solicitante_telefone } = req.body;
+    const qty = parseInt(quantidade);
+    if (isNaN(item_id) || isNaN(qty) || qty <= 0) {
+        return res.status(400).json({ error: 'Item e quantidade válidos são obrigatórios' });
+    }
+    // Somente membros ou gerentes podem criar requisições
+    const role = req.user && req.user.role;
+    if (role === 'admin' || role === 'lider') {
+        return res.status(403).json({ error: 'Líderes e administradores não podem solicitar itens' });
+    }
+    // Verifica se o item existe no inventário
+    db.get('SELECT * FROM inventario_familia WHERE id = ?', [item_id], (err, item) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        if (!item) {
+            return res.status(404).json({ error: 'Item não encontrado no inventário da família' });
+        }
+        // Buscar informações do membro associado ao usuário (se existir)
+        db.get('SELECT id, nome, rg, telefone, cargo FROM membros WHERE usuario_id = ?', [req.user.id], (memberErr, member) => {
+            if (memberErr) {
+                return res.status(500).json({ error: memberErr.message });
+            }
+            let nomeSolicitante = solicitante_nome;
+            let cargoSolicitante = solicitante_cargo;
+            let rgSolicitante = solicitante_rg;
+            let telefoneSolicitante = solicitante_telefone;
+            let membroId = null;
+            if (member) {
+                nomeSolicitante = member.nome;
+                cargoSolicitante = member.cargo;
+                rgSolicitante = member.rg;
+                telefoneSolicitante = member.telefone;
+                membroId = member.id;
+            }
+            db.run(`INSERT INTO requisicoes_familia (item_id, membro_id, solicitante_nome, solicitante_cargo, solicitante_rg, solicitante_telefone, quantidade, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'pendente')`,
+                [item_id, membroId, nomeSolicitante, cargoSolicitante, rgSolicitante, telefoneSolicitante, qty], function (insertErr) {
+                    if (insertErr) {
+                        return res.status(500).json({ error: insertErr.message });
+                    }
+                    db.get(`SELECT r.*, i.categoria, i.subcategoria
+                            FROM requisicoes_familia r
+                            JOIN inventario_familia i ON i.id = r.item_id
+                            WHERE r.id = ?`, [this.lastID], (selErr, reqRow) => {
+                        if (selErr) {
+                            return res.status(500).json({ error: selErr.message });
+                        }
+                        res.json(reqRow);
+                    });
+                }
+            );
+        });
+    });
+});
+
+/**
+ * Lista as requisições de itens do inventário da família. Líderes e
+ * administradores veem todas as requisições. Membros e gerentes veem
+ * apenas as requisições que eles próprios criaram. Cada linha da
+ * requisição inclui informações sobre o item, o solicitante e o líder
+ * responsável (se houver).
+ */
+app.get('/api/requisicoes-familia', authenticateToken, (req, res) => {
+    const role = req.user && req.user.role;
+    // Monta a consulta base com join para trazer categoria e subcategoria
+    let sql = `SELECT r.*, i.categoria, i.subcategoria, u.username AS lider_username
+               FROM requisicoes_familia r
+               JOIN inventario_familia i ON i.id = r.item_id
+               LEFT JOIN usuarios u ON u.id = r.lider_id`;
+    let params = [];
+    if (role !== 'admin' && role !== 'lider') {
+        // Restringe a requisições do próprio membro se não for líder/administrador
+        sql += ' WHERE r.membro_id = (SELECT id FROM membros WHERE usuario_id = ?)';
+        params.push(req.user.id);
+    }
+    db.all(sql, params, (err, rows) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json(rows);
+    });
+});
+
+/**
+ * Aprova uma requisição de item. Apenas líderes ou administradores podem
+ * aprovar uma requisição. Esta ação não altera o estoque até que a
+ * requisição seja marcada como entregue. É registrado o id do líder que
+ * aprovou e a data de resposta.
+ */
+app.put('/api/requisicoes-familia/:id/aprovar', authenticateToken, (req, res) => {
+    const role = req.user && req.user.role;
+    if (role !== 'admin' && role !== 'lider') {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+        return res.status(400).json({ error: 'ID inválido' });
+    }
+    // Carrega a requisição
+    db.get('SELECT * FROM requisicoes_familia WHERE id = ?', [id], (err, reqRow) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        if (!reqRow) {
+            return res.status(404).json({ error: 'Requisição não encontrada' });
+        }
+        if (reqRow.status !== 'pendente') {
+            return res.status(400).json({ error: 'Apenas requisições pendentes podem ser aprovadas' });
+        }
+        db.run('UPDATE requisicoes_familia SET status = ?, lider_id = ?, data_resposta = CURRENT_TIMESTAMP WHERE id = ?', ['aprovado', req.user.id, id], function (updateErr) {
+            if (updateErr) {
+                return res.status(500).json({ error: updateErr.message });
+            }
+            db.get(`SELECT r.*, i.categoria, i.subcategoria, u.username AS lider_username
+                    FROM requisicoes_familia r
+                    JOIN inventario_familia i ON i.id = r.item_id
+                    LEFT JOIN usuarios u ON u.id = r.lider_id
+                    WHERE r.id = ?`, [id], (selErr, updated) => {
+                if (selErr) {
+                    return res.status(500).json({ error: selErr.message });
+                }
+                res.json(updated);
+            });
+        });
+    });
+});
+
+/**
+ * Rejeita uma requisição de item. Apenas líderes ou administradores podem
+ * rejeitar uma requisição. O status passa para "rejeitado" e registra
+ * quem rejeitou e quando.
+ */
+app.put('/api/requisicoes-familia/:id/rejeitar', authenticateToken, (req, res) => {
+    const role = req.user && req.user.role;
+    if (role !== 'admin' && role !== 'lider') {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+        return res.status(400).json({ error: 'ID inválido' });
+    }
+    db.get('SELECT * FROM requisicoes_familia WHERE id = ?', [id], (err, reqRow) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        if (!reqRow) {
+            return res.status(404).json({ error: 'Requisição não encontrada' });
+        }
+        if (reqRow.status !== 'pendente') {
+            return res.status(400).json({ error: 'Apenas requisições pendentes podem ser rejeitadas' });
+        }
+        db.run('UPDATE requisicoes_familia SET status = ?, lider_id = ?, data_resposta = CURRENT_TIMESTAMP WHERE id = ?', ['rejeitado', req.user.id, id], function (updateErr) {
+            if (updateErr) {
+                return res.status(500).json({ error: updateErr.message });
+            }
+            db.get(`SELECT r.*, i.categoria, i.subcategoria, u.username AS lider_username
+                    FROM requisicoes_familia r
+                    JOIN inventario_familia i ON i.id = r.item_id
+                    LEFT JOIN usuarios u ON u.id = r.lider_id
+                    WHERE r.id = ?`, [id], (selErr, updated) => {
+                if (selErr) {
+                    return res.status(500).json({ error: selErr.message });
+                }
+                res.json(updated);
+            });
+        });
+    });
+});
+
+/**
+ * Marca uma requisição aprovada como entregue. Apenas líderes ou
+ * administradores podem marcar a entrega. Quando uma requisição é
+ * entregue, a quantidade solicitada é baixada do inventário da família.
+ */
+app.put('/api/requisicoes-familia/:id/entregar', authenticateToken, (req, res) => {
+    const role = req.user && req.user.role;
+    if (role !== 'admin' && role !== 'lider') {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+        return res.status(400).json({ error: 'ID inválido' });
+    }
+    db.get('SELECT * FROM requisicoes_familia WHERE id = ?', [id], (err, reqRow) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        if (!reqRow) {
+            return res.status(404).json({ error: 'Requisição não encontrada' });
+        }
+        if (reqRow.status !== 'aprovado') {
+            return res.status(400).json({ error: 'Apenas requisições aprovadas podem ser entregues' });
+        }
+        // Verifica disponibilidade no inventário
+        db.get('SELECT * FROM inventario_familia WHERE id = ?', [reqRow.item_id], (itemErr, item) => {
+            if (itemErr) {
+                return res.status(500).json({ error: itemErr.message });
+            }
+            if (!item) {
+                return res.status(404).json({ error: 'Item não encontrado no inventário' });
+            }
+            if (item.quantidade < reqRow.quantidade) {
+                return res.status(400).json({ error: 'Quantidade insuficiente no inventário para entrega' });
+            }
+            // Subtrai a quantidade do inventário e marca a requisição como entregue
+            const novaQuantidade = item.quantidade - reqRow.quantidade;
+            db.run('UPDATE inventario_familia SET quantidade = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE id = ?', [novaQuantidade, item.id], function (updateInvErr) {
+                if (updateInvErr) {
+                    return res.status(500).json({ error: updateInvErr.message });
+                }
+                db.run('UPDATE requisicoes_familia SET status = ?, data_entrega = CURRENT_TIMESTAMP WHERE id = ?', ['entregue', id], function (updateReqErr) {
+                    if (updateReqErr) {
+                        return res.status(500).json({ error: updateReqErr.message });
+                    }
+                    db.get(`SELECT r.*, i.categoria, i.subcategoria, u.username AS lider_username
+                            FROM requisicoes_familia r
+                            JOIN inventario_familia i ON i.id = r.item_id
+                            LEFT JOIN usuarios u ON u.id = r.lider_id
+                            WHERE r.id = ?`, [id], (selErr, updated) => {
+                        if (selErr) {
+                            return res.status(500).json({ error: selErr.message });
+                        }
+                        res.json(updated);
+                    });
+                });
+            });
+        });
+    });
+});
+
+/**
+ * Cancela uma requisição entregue. Apenas líderes ou administradores podem
+ * cancelar uma requisição já entregue. Ao cancelar, a quantidade é
+ * devolvida ao inventário e o status passa para "cancelado".
+ */
+app.put('/api/requisicoes-familia/:id/cancelar', authenticateToken, (req, res) => {
+    const role = req.user && req.user.role;
+    if (role !== 'admin' && role !== 'lider') {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+        return res.status(400).json({ error: 'ID inválido' });
+    }
+    db.get('SELECT * FROM requisicoes_familia WHERE id = ?', [id], (err, reqRow) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        if (!reqRow) {
+            return res.status(404).json({ error: 'Requisição não encontrada' });
+        }
+        if (reqRow.status !== 'entregue') {
+            return res.status(400).json({ error: 'Apenas requisições entregues podem ser canceladas' });
+        }
+        // Devolve a quantidade ao inventário
+        db.get('SELECT * FROM inventario_familia WHERE id = ?', [reqRow.item_id], (itemErr, item) => {
+            if (itemErr) {
+                return res.status(500).json({ error: itemErr.message });
+            }
+            if (!item) {
+                return res.status(404).json({ error: 'Item não encontrado no inventário' });
+            }
+            const novaQuantidade = item.quantidade + reqRow.quantidade;
+            db.run('UPDATE inventario_familia SET quantidade = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE id = ?', [novaQuantidade, item.id], function (updateInvErr) {
+                if (updateInvErr) {
+                    return res.status(500).json({ error: updateInvErr.message });
+                }
+                db.run('UPDATE requisicoes_familia SET status = ? WHERE id = ?', ['cancelado', id], function (updateReqErr) {
+                    if (updateReqErr) {
+                        return res.status(500).json({ error: updateReqErr.message });
+                    }
+                    db.get(`SELECT r.*, i.categoria, i.subcategoria, u.username AS lider_username
+                            FROM requisicoes_familia r
+                            JOIN inventario_familia i ON i.id = r.item_id
+                            LEFT JOIN usuarios u ON u.id = r.lider_id
+                            WHERE r.id = ?`, [id], (selErr, updated) => {
+                        if (selErr) {
+                            return res.status(500).json({ error: selErr.message });
+                        }
+                        res.json(updated);
+                    });
+                });
+            });
+        });
     });
 });
 
