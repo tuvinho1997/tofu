@@ -1,0 +1,27 @@
+name: Deploy Node.js Project (Password Auth)
+
+on:
+  push:
+    branches:
+      - main # Mude para a branch que você usa para deploy (ex: master, develop)
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest # O ambiente de execução do GitHub Actions
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4 # Baixa o código do seu repositório
+
+      - name: Deploy via SSH with Password
+        uses: appleboy/ssh-action@master # Usa a action de terceiros para conexão SSH
+        with:
+          host: ${{ secrets.SSH_HOST }} # Pega o host do segredo do GitHub
+          username: ${{ secrets.SSH_USERNAME }} # Pega o usuário do segredo do GitHub
+          password: ${{ secrets.SSH_PASSWORD }} # <<<<<< NOVO: Usa a senha do segredo do GitHub
+          script: | # Comandos a serem executados no servidor
+            echo "Conectado ao servidor. Atualizando projeto..."
+            cd /tofu # Navega para o diretório do seu projeto
+            git pull # Puxa as últimas alterações do Git
+            pm2 restart tofu # Reinicia o processo PM2 do seu projeto
+            echo "Deploy concluído!"
