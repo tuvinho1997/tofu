@@ -251,11 +251,31 @@ function initDatabase() {
             db.run(`CREATE TABLE IF NOT EXISTS inventario_familia (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 categoria TEXT NOT NULL,
-                item TEXT NOT NULL,
+                -- "item" representa o nome do produto. Mantemos também a coluna
+                -- "subcategoria" por compatibilidade com versões anteriores. As duas
+                -- colunas armazenam o mesmo valor.
+                item TEXT,
+                subcategoria TEXT,
                 quantidade INTEGER DEFAULT 0,
                 preco REAL DEFAULT 0,
                 data_atualizacao DATETIME DEFAULT CURRENT_TIMESTAMP
             )`);
+            // Garante a existência das colunas item e subcategoria. Caso a
+            // tabela já exista mas falte alguma delas, adiciona a coluna.
+            db.run('ALTER TABLE inventario_familia ADD COLUMN item TEXT', (err) => {
+                if (err && !/duplicate column/i.test(err.message)) {
+                    console.error('Erro ao adicionar coluna item em inventario_familia:', err.message);
+                }
+            });
+            db.run('ALTER TABLE inventario_familia ADD COLUMN subcategoria TEXT', (err) => {
+                if (err && !/duplicate column/i.test(err.message)) {
+                    console.error('Erro ao adicionar coluna subcategoria em inventario_familia:', err.message);
+                }
+            });
+            // Copia valores entre item e subcategoria se algum estiver nulo. Essa
+            // sincronização garante compatibilidade com registros antigos.
+            db.run(`UPDATE inventario_familia SET item = subcategoria WHERE (item IS NULL OR item = '') AND subcategoria IS NOT NULL`);
+            db.run(`UPDATE inventario_familia SET subcategoria = item WHERE (subcategoria IS NULL OR subcategoria = '') AND item IS NOT NULL`);
             // Índice único para evitar duplicidade (categoria, item)
             db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_inventario_cat_item ON inventario_familia(categoria, item)');
 
@@ -342,8 +362,10 @@ function initDatabase() {
                 { categoria: 'Acessórios', item: 'Lanterna' }
             ];
             itensFamilia.forEach(item => {
-                db.run('INSERT OR IGNORE INTO inventario_familia (categoria, item, quantidade, preco) VALUES (?, ?, 0, 0)',
-                    [item.categoria, item.item]);
+                // Insere o valor tanto em "item" quanto em "subcategoria" para
+                // manter compatibilidade. Caso já exista, a inserção é ignorada.
+                db.run('INSERT OR IGNORE INTO inventario_familia (categoria, item, subcategoria, quantidade, preco) VALUES (?, ?, ?, 0, 0)',
+                    [item.categoria, item.item, item.item]);
             });
 
             // Tabela de configuração geral. Armazena chaves de configuração como a taxa de comissão.
@@ -1769,7 +1791,8 @@ app.post('/api/familias', authenticateToken, (req, res) => {
 app.get('/api/inventario-familia', authenticateToken, (req, res) => {
     // Lista todos os itens do inventário, ordenados por categoria e item. Não
     // existe mais o campo subcategoria.
-    db.all('SELECT * FROM inventario_familia ORDER BY categoria, item', (err, rows) => {
+    // Seleciona id, categoria, item (preferencialmente coluna item; se nula, usa subcategoria), quantidade e preco.
+    db.all('SELECT id, categoria, COALESCE(item, subcategoria) AS item, quantidade, preco, data_atualizacao FROM inventario_familia ORDER BY categoria, item', (err, rows) => {
         if (err) {
             return res.status(500).json({ error: err.message });
         }
@@ -1799,7 +1822,7 @@ app.post('/api/inventario-familia', authenticateToken, (req, res) => {
     }
     // Tenta atualizar um item existente; se nenhum item for atualizado,
     // insere um novo registro.
-    db.get('SELECT * FROM inventario_familia WHERE categoria = ? AND item = ?', [categoria, item], (err, existing) => {
+    db.get('SELECT * FROM inventario_familia WHERE categoria = ? AND (item = ? OR subcategoria = ?)', [categoria, item, item], (err, existing) => {
         if (err) {
             return res.status(500).json({ error: err.message });
         }
@@ -1819,7 +1842,9 @@ app.post('/api/inventario-familia', authenticateToken, (req, res) => {
             });
         } else {
             const insertPrice = price !== null ? price : 0;
-            db.run('INSERT INTO inventario_familia (categoria, item, quantidade, preco) VALUES (?, ?, ?, ?)', [categoria, item, qtd, insertPrice], function (insertErr) {
+            // Insere item preenchendo tanto a coluna item quanto a subcategoria, para garantir
+            // compatibilidade com esquemas antigos.
+            db.run('INSERT INTO inventario_familia (categoria, item, subcategoria, quantidade, preco) VALUES (?, ?, ?, ?, ?)', [categoria, item, item, qtd, insertPrice], function (insertErr) {
                 if (insertErr) {
                     return res.status(500).json({ error: insertErr.message });
                 }
@@ -1927,7 +1952,7 @@ app.post('/api/requisicoes-familia', authenticateToken, (req, res) => {
                     if (insertErr) {
                         return res.status(500).json({ error: insertErr.message });
                     }
-                    db.get(`SELECT r.*, i.categoria, i.item
+                    db.get(`SELECT r.*, i.categoria, COALESCE(i.item, i.subcategoria) AS item
                             FROM requisicoes_familia r
                             JOIN inventario_familia i ON i.id = r.item_id
                             WHERE r.id = ?`, [this.lastID], (selErr, reqRow) => {
@@ -1952,7 +1977,7 @@ app.post('/api/requisicoes-familia', authenticateToken, (req, res) => {
 app.get('/api/requisicoes-familia', authenticateToken, (req, res) => {
     const role = req.user && req.user.role;
     // Monta a consulta base com join para trazer categoria e subcategoria
-    let sql = `SELECT r.*, i.categoria, i.item, u.username AS lider_username
+    let sql = `SELECT r.*, i.categoria, COALESCE(i.item, i.subcategoria) AS item, u.username AS lider_username
                FROM requisicoes_familia r
                JOIN inventario_familia i ON i.id = r.item_id
                LEFT JOIN usuarios u ON u.id = r.lider_id`;
@@ -2000,7 +2025,7 @@ app.put('/api/requisicoes-familia/:id/aprovar', authenticateToken, (req, res) =>
             if (updateErr) {
                 return res.status(500).json({ error: updateErr.message });
             }
-            db.get(`SELECT r.*, i.categoria, i.item, u.username AS lider_username
+            db.get(`SELECT r.*, i.categoria, COALESCE(i.item, i.subcategoria) AS item, u.username AS lider_username
                     FROM requisicoes_familia r
                     JOIN inventario_familia i ON i.id = r.item_id
                     LEFT JOIN usuarios u ON u.id = r.lider_id
@@ -2042,7 +2067,7 @@ app.put('/api/requisicoes-familia/:id/rejeitar', authenticateToken, (req, res) =
             if (updateErr) {
                 return res.status(500).json({ error: updateErr.message });
             }
-            db.get(`SELECT r.*, i.categoria, i.item, u.username AS lider_username
+            db.get(`SELECT r.*, i.categoria, COALESCE(i.item, i.subcategoria) AS item, u.username AS lider_username
                     FROM requisicoes_familia r
                     JOIN inventario_familia i ON i.id = r.item_id
                     LEFT JOIN usuarios u ON u.id = r.lider_id
@@ -2101,7 +2126,7 @@ app.put('/api/requisicoes-familia/:id/entregar', authenticateToken, (req, res) =
                     if (updateReqErr) {
                         return res.status(500).json({ error: updateReqErr.message });
                     }
-            db.get(`SELECT r.*, i.categoria, i.item, u.username AS lider_username
+            db.get(`SELECT r.*, i.categoria, COALESCE(i.item, i.subcategoria) AS item, u.username AS lider_username
                     FROM requisicoes_familia r
                     JOIN inventario_familia i ON i.id = r.item_id
                     LEFT JOIN usuarios u ON u.id = r.lider_id
@@ -2158,7 +2183,7 @@ app.put('/api/requisicoes-familia/:id/cancelar', authenticateToken, (req, res) =
                     if (updateReqErr) {
                         return res.status(500).json({ error: updateReqErr.message });
                     }
-                    db.get(`SELECT r.*, i.categoria, i.item, u.username AS lider_username
+                    db.get(`SELECT r.*, i.categoria, COALESCE(i.item, i.subcategoria) AS item, u.username AS lider_username
                             FROM requisicoes_familia r
                             JOIN inventario_familia i ON i.id = r.item_id
                             LEFT JOIN usuarios u ON u.id = r.lider_id
