@@ -4490,16 +4490,14 @@ let editingEncomendaId = null;
                 };
                 actionsDiv.appendChild(addBtn);
             }
-            // Ação para solicitar item (somente membros/gerentes)
-            if (user.role === 'membro' || user.role === 'gerente') {
-                const reqBtn = document.createElement('button');
-                reqBtn.className = 'btn-primary';
-                reqBtn.textContent = 'Nova Requisição';
-                reqBtn.onclick = () => {
-                    openNovaRequisicaoFamilia();
-                };
-                reqActionsDiv.appendChild(reqBtn);
-            }
+            // Ação para solicitar item (todos os usuários podem criar requisições)
+            const reqBtn = document.createElement('button');
+            reqBtn.className = 'btn-primary';
+            reqBtn.textContent = 'Nova Requisição';
+            reqBtn.onclick = () => {
+                openNovaRequisicaoFamilia();
+            };
+            reqActionsDiv.appendChild(reqBtn);
         }
 
         /**
