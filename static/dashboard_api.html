@@ -660,6 +660,7 @@
         <button class="nav-tab" onclick="showTab('rotas')">Rotas</button>
         <button class="nav-tab" onclick="showTab('encomendas')">Encomendas</button>
         <button class="nav-tab" onclick="showTab('estoque')">Estoque</button>
+        <button class="nav-tab" onclick="showTab('inventarioFamilia')">Inventário Família</button>
         <button class="nav-tab" onclick="showTab('relatorios')">Relatórios</button>
     </div>
 
@@ -741,6 +742,50 @@
                     Bem-vindo ao sistema de controle da facção! Use as abas acima para navegar pelas funcionalidades. 
                     O sistema oferece controle completo de membros, rotas, encomendas, estoque e relatórios detalhados.
                 </p>
+            </div>
+        </div>
+
+        <!-- Inventário Família Tab -->
+        <div id="inventarioFamilia" class="tab-content" style="display: none;">
+            <div class="content-card">
+                <div class="card-header">
+                    <h3 class="card-title">Inventário da Família</h3>
+                    <div id="inventarioFamiliaActions" style="display:flex; gap:10px;">
+                        <!-- Botões de ação serão exibidos conforme permissões do usuário -->
+                    </div>
+                </div>
+                <div id="inventarioFamiliaLoading" class="loading-message">Carregando...</div>
+                <div id="inventarioFamiliaContent" style="display:none;">
+                    <h4 style="color:#ecf0f1; margin-top: 0;">Itens do Inventário</h4>
+                    <table class="styled-table">
+                        <thead>
+                            <tr>
+                                <th>Categoria</th>
+                                <th>Item</th>
+                                <th>Quantidade</th>
+                                <th>Preço Unit.</th>
+                            </tr>
+                        </thead>
+                        <tbody id="inventarioFamiliaTableBody"></tbody>
+                    </table>
+                    <hr style="margin: 20px 0; border-color: #34495e;">
+                    <h4 style="color:#ecf0f1;">Requisições de Itens</h4>
+                    <div id="requisicoesFamiliaActions" style="margin-bottom:10px;"></div>
+                    <table class="styled-table">
+                        <thead>
+                            <tr>
+                                <th>Solicitante</th>
+                                <th>Cargo</th>
+                                <th>Item</th>
+                                <th>Quantidade</th>
+                                <th>Status</th>
+                                <th>Líder</th>
+                                <th>Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody id="requisicoesFamiliaTableBody"></tbody>
+                    </table>
+                </div>
             </div>
         </div>
 
@@ -1961,6 +2006,9 @@ let editingEncomendaId = null;
                 case 'imagens':
                     loadImagens();
                     break;
+                case 'inventarioFamilia':
+                    loadInventarioFamilia();
+                    break;
             }
         }
 
@@ -2995,12 +3043,25 @@ let editingEncomendaId = null;
             const materiaisBody = document.getElementById('materiaisTableBody');
             materiaisBody.innerHTML = '';
             if (data.materiais && Array.isArray(data.materiais)) {
-                data.materiais.forEach(material => {
+                // Agrupa materiais pelo nome para evitar duplicidades na exibição
+                const groupedMat = {};
+                data.materiais.forEach(mat => {
+                    const key = mat.nome;
+                    if (!groupedMat[key]) {
+                        groupedMat[key] = { quantidade: 0, preco: parseFloat(mat.preco) };
+                    }
+                    groupedMat[key].quantidade += parseFloat(mat.quantidade);
+                    // Mantém o menor preço encontrado como referência
+                    if (parseFloat(mat.preco) < groupedMat[key].preco) {
+                        groupedMat[key].preco = parseFloat(mat.preco);
+                    }
+                });
+                Object.keys(groupedMat).forEach(name => {
                     const row = document.createElement('tr');
                     row.innerHTML = `
-                        <td>${material.nome}</td>
-                        <td>${material.quantidade}</td>
-                        <td>R$ ${parseFloat(material.preco).toFixed(2)}</td>
+                        <td>${name}</td>
+                        <td>${groupedMat[name].quantidade}</td>
+                        <td>R$ ${groupedMat[name].preco.toFixed(2)}</td>
                     `;
                     materiaisBody.appendChild(row);
                 });
@@ -3009,14 +3070,25 @@ let editingEncomendaId = null;
             const municoesBody = document.getElementById('municoesTableBody');
             municoesBody.innerHTML = '';
             if (data.municoes && Array.isArray(data.municoes)) {
-                data.municoes.forEach(municao => {
+                // Agrupa munições pelo nome para evitar duplicidades na exibição
+                const groupedMun = {};
+                data.municoes.forEach(mun => {
+                    const key = mun.nome || mun.tipo;
+                    if (!groupedMun[key]) {
+                        groupedMun[key] = { quantidade: 0, preco: parseFloat(mun.preco) };
+                    }
+                    groupedMun[key].quantidade += parseFloat(mun.quantidade);
+                    if (parseFloat(mun.preco) < groupedMun[key].preco) {
+                        groupedMun[key].preco = parseFloat(mun.preco);
+                    }
+                });
+                Object.keys(groupedMun).forEach(name => {
                     const row = document.createElement('tr');
-                    // Para exibir 762 sem o sufixo "mm", usamos a função auxiliar
-                    const nomeFormatado = typeof formatMunicaoName === 'function' ? formatMunicaoName(municao.nome || municao.tipo) : (municao.nome || municao.tipo);
+                    const nomeFormatado = typeof formatMunicaoName === 'function' ? formatMunicaoName(name) : name;
                     row.innerHTML = `
                         <td>${nomeFormatado}</td>
-                        <td>${municao.quantidade}</td>
-                        <td>R$ ${parseFloat(municao.preco).toFixed(2)}</td>
+                        <td>${groupedMun[name].quantidade}</td>
+                        <td>R$ ${groupedMun[name].preco.toFixed(2)}</td>
                     `;
                     municoesBody.appendChild(row);
                 });
@@ -4266,6 +4338,286 @@ let editingEncomendaId = null;
                 event.target.style.display = 'none';
             }
         }
+
+        // ====================== Inventário Família ========================
+        let inventarioFamilia = [];
+        let requisicoesFamilia = [];
+
+        /**
+         * Carrega o inventário da família e as requisições associadas. Esta
+         * função é chamada quando a aba de inventário família é aberta.
+         */
+        async function loadInventarioFamilia() {
+            const inventarioLoading = document.getElementById('inventarioFamiliaLoading');
+            const inventarioContent = document.getElementById('inventarioFamiliaContent');
+            inventarioLoading.style.display = 'block';
+            inventarioContent.style.display = 'none';
+            try {
+                // Carrega inventário
+                const invRes = await fetch(`${API_BASE}/inventario-familia`, {
+                    headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
+                });
+                const invData = await invRes.json();
+                if (!invRes.ok) throw new Error(invData.error || 'Erro ao carregar inventário');
+                inventarioFamilia = invData;
+                // Carrega requisições
+                const reqRes = await fetch(`${API_BASE}/requisicoes-familia`, {
+                    headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
+                });
+                const reqData = await reqRes.json();
+                if (!reqRes.ok) throw new Error(reqData.error || 'Erro ao carregar requisições');
+                requisicoesFamilia = reqData;
+                renderInventarioFamiliaTable();
+                renderRequisicoesFamiliaTable();
+                updateInventarioFamiliaActions();
+                inventarioLoading.style.display = 'none';
+                inventarioContent.style.display = 'block';
+            } catch (error) {
+                inventarioLoading.textContent = `Erro: ${error.message}`;
+            }
+        }
+
+        /**
+         * Atualiza os botões de ação no inventário da família com base no
+         * papel do usuário. Membros e gerentes podem solicitar itens, enquanto
+         * líderes e administradores podem cadastrar novos itens.  Além disso,
+         * requisições pendentes terão botões de aprovação/rejeição para
+         * líderes/administradores e botão de entrega/cancelamento para
+         * requisições já aprovadas/entregues.
+         */
+        function updateInventarioFamiliaActions() {
+            const user = currentUser || JSON.parse(localStorage.getItem('user') || '{}');
+            const actionsDiv = document.getElementById('inventarioFamiliaActions');
+            const reqActionsDiv = document.getElementById('requisicoesFamiliaActions');
+            if (!actionsDiv || !reqActionsDiv) return;
+            actionsDiv.innerHTML = '';
+            reqActionsDiv.innerHTML = '';
+            // Ação para adicionar item (somente líderes/administradores)
+            if (user.role === 'admin' || user.role === 'lider') {
+                const addBtn = document.createElement('button');
+                addBtn.className = 'btn-primary';
+                addBtn.textContent = 'Adicionar Item';
+                addBtn.onclick = () => {
+                    createOrUpdateItemFamilia();
+                };
+                actionsDiv.appendChild(addBtn);
+            }
+            // Ação para solicitar item (somente membros/gerentes)
+            if (user.role === 'membro' || user.role === 'gerente') {
+                const reqBtn = document.createElement('button');
+                reqBtn.className = 'btn-primary';
+                reqBtn.textContent = 'Nova Requisição';
+                reqBtn.onclick = () => {
+                    createRequisicaoFamilia();
+                };
+                reqActionsDiv.appendChild(reqBtn);
+            }
+        }
+
+        /**
+         * Renderiza a tabela do inventário da família agrupando por categoria.
+         */
+        function renderInventarioFamiliaTable() {
+            const body = document.getElementById('inventarioFamiliaTableBody');
+            if (!body) return;
+            body.innerHTML = '';
+            // Agrupar por categoria
+            const grouped = {};
+            inventarioFamilia.forEach(item => {
+                if (!grouped[item.categoria]) grouped[item.categoria] = [];
+                grouped[item.categoria].push(item);
+            });
+            // Para cada categoria, inserir linhas
+            Object.keys(grouped).forEach(cat => {
+                grouped[cat].forEach(item => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${item.categoria}</td>
+                        <td>${item.subcategoria}</td>
+                        <td>${item.quantidade}</td>
+                        <td>R$ ${parseFloat(item.preco).toFixed(2)}</td>
+                    `;
+                    body.appendChild(tr);
+                });
+            });
+        }
+
+        /**
+         * Renderiza a tabela de requisições da família.  Exibe ações
+         * contextuais dependendo do status da requisição e do papel do usuário.
+         */
+        function renderRequisicoesFamiliaTable() {
+            const body = document.getElementById('requisicoesFamiliaTableBody');
+            if (!body) return;
+            body.innerHTML = '';
+            const user = currentUser || JSON.parse(localStorage.getItem('user') || '{}');
+            requisicoesFamilia.forEach(req => {
+                const tr = document.createElement('tr');
+                // Monta coluna de ações
+                let actionsHTML = '';
+                if (user.role === 'admin' || user.role === 'lider') {
+                    if (req.status === 'pendente') {
+                        actionsHTML += `<button class="btn-primary" onclick="aprovarRequisicao(${req.id})">Aprovar</button>`;
+                        actionsHTML += `<button class="btn-secondary" onclick="rejeitarRequisicao(${req.id})">Rejeitar</button>`;
+                    } else if (req.status === 'aprovado') {
+                        actionsHTML += `<button class="btn-primary" onclick="entregarRequisicao(${req.id})">Entregar</button>`;
+                    } else if (req.status === 'entregue') {
+                        actionsHTML += `<button class="btn-secondary" onclick="cancelarRequisicao(${req.id})">Cancelar</button>`;
+                    }
+                }
+                tr.innerHTML = `
+                    <td>${req.solicitante_nome}</td>
+                    <td>${req.solicitante_cargo || ''}</td>
+                    <td>${req.categoria} - ${req.subcategoria}</td>
+                    <td>${req.quantidade}</td>
+                    <td>${req.status}</td>
+                    <td>${req.lider_username || '-'}</td>
+                    <td>${actionsHTML}</td>
+                `;
+                body.appendChild(tr);
+            });
+        }
+
+        /**
+         * Solicita ao usuário informações para criar ou atualizar um item no
+         * inventário da família e envia a requisição para o servidor. Se um
+         * item com a mesma categoria e subcategoria já existir, a quantidade
+         * informada será somada à existente. Caso contrário, um novo item
+         * será criado. Somente líderes ou administradores chamam esta função.
+         */
+        async function createOrUpdateItemFamilia() {
+            const categoria = prompt('Informe a categoria do item (ex.: Produtos Comprados, Produtos de Ação, etc.):');
+            if (!categoria) return;
+            const subcategoria = prompt('Informe a subcategoria do item (nome do produto):');
+            if (!subcategoria) return;
+            const quantidadeStr = prompt('Informe a quantidade a adicionar:');
+            const qtd = parseInt(quantidadeStr);
+            if (isNaN(qtd) || qtd < 0) {
+                alert('Quantidade inválida');
+                return;
+            }
+            const precoStr = prompt('Informe o preço unitário (opcional, deixe em branco para manter):');
+            const preco = precoStr ? parseFloat(precoStr) : null;
+            try {
+                const response = await fetch(`${API_BASE}/inventario-familia`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+                    },
+                    body: JSON.stringify({ categoria, subcategoria, quantidade: qtd, preco })
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || 'Erro ao atualizar inventário');
+                alert('Item atualizado com sucesso');
+                loadInventarioFamilia();
+            } catch (error) {
+                alert(error.message);
+            }
+        }
+
+        /**
+         * Solicita ao usuário informações para criar uma requisição de item e
+         * envia a requisição para o servidor. Apenas membros ou gerentes
+         * chamam esta função. O usuário escolhe um item pelo nome e a
+         * quantidade desejada. Os dados do solicitante são obtidos no
+         * servidor.
+         */
+        async function createRequisicaoFamilia() {
+            if (!inventarioFamilia || inventarioFamilia.length === 0) {
+                alert('Nenhum item no inventário disponível para requisição');
+                return;
+            }
+            // Constrói uma lista de opções para o prompt
+            let itemList = 'Selecione o item desejado pelo número:\n';
+            inventarioFamilia.forEach((item, idx) => {
+                itemList += `${idx + 1}. ${item.categoria} - ${item.subcategoria} (Qtd: ${item.quantidade})\n`;
+            });
+            const itemIndexStr = prompt(itemList);
+            const index = parseInt(itemIndexStr) - 1;
+            if (isNaN(index) || index < 0 || index >= inventarioFamilia.length) {
+                alert('Item selecionado inválido');
+                return;
+            }
+            const quantidadeStr = prompt('Informe a quantidade desejada:');
+            const qtd = parseInt(quantidadeStr);
+            if (isNaN(qtd) || qtd <= 0) {
+                alert('Quantidade inválida');
+                return;
+            }
+            const selectedItem = inventarioFamilia[index];
+            try {
+                const response = await fetch(`${API_BASE}/requisicoes-familia`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+                    },
+                    body: JSON.stringify({ item_id: selectedItem.id, quantidade: qtd })
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || 'Erro ao criar requisição');
+                alert('Requisição criada com sucesso');
+                loadInventarioFamilia();
+            } catch (error) {
+                alert(error.message);
+            }
+        }
+
+        // Ações de requisições: Aprovar, Rejeitar, Entregar, Cancelar
+        async function aprovarRequisicao(id) {
+            try {
+                const res = await fetch(`${API_BASE}/requisicoes-familia/${id}/aprovar`, {
+                    method: 'PUT',
+                    headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Erro ao aprovar requisição');
+                loadInventarioFamilia();
+            } catch (error) {
+                alert(error.message);
+            }
+        }
+        async function rejeitarRequisicao(id) {
+            try {
+                const res = await fetch(`${API_BASE}/requisicoes-familia/${id}/rejeitar`, {
+                    method: 'PUT',
+                    headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Erro ao rejeitar requisição');
+                loadInventarioFamilia();
+            } catch (error) {
+                alert(error.message);
+            }
+        }
+        async function entregarRequisicao(id) {
+            try {
+                const res = await fetch(`${API_BASE}/requisicoes-familia/${id}/entregar`, {
+                    method: 'PUT',
+                    headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Erro ao entregar requisição');
+                loadInventarioFamilia();
+            } catch (error) {
+                alert(error.message);
+            }
+        }
+        async function cancelarRequisicao(id) {
+            try {
+                const res = await fetch(`${API_BASE}/requisicoes-familia/${id}/cancelar`, {
+                    method: 'PUT',
+                    headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Erro ao cancelar requisição');
+                loadInventarioFamilia();
+            } catch (error) {
+                alert(error.message);
+            }
+        }
+
     </script>
 </body>
 </html>
