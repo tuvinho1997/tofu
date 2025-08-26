@@ -1067,6 +1067,18 @@ function verificarEncomendasProntas() {
     });
 }
 
+// Rota para forçar verificação de encomendas prontas
+app.post('/api/verificar-prontos', (req, res) => {
+    verificarEncomendasProntas()
+        .then(() => {
+            res.json({ message: 'Verificação de encomendas prontas executada com sucesso' });
+        })
+        .catch(err => {
+            console.error('Erro ao verificar encomendas prontas:', err);
+            res.status(500).json({ error: 'Erro ao verificar encomendas prontas: ' + err.message });
+        });
+});
+
 // Rotas de encomendas
 app.get('/api/encomendas', (req, res) => {
     db.all('SELECT * FROM encomendas ORDER BY data_criacao DESC', (err, rows) => {
