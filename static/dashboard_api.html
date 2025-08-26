@@ -2478,6 +2478,31 @@ let editingEncomendaId = null;
             });
         }
 
+        // Função para excluir um membro
+        async function deleteMembro(id) {
+            if (!confirm('Deseja realmente excluir este membro?')) {
+                return;
+            }
+            try {
+                const token = localStorage.getItem('authToken');
+                const response = await fetch(`${API_BASE}/membros/${id}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Authorization': token ? 'Bearer ' + token : undefined
+                    }
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    alert(data.message || 'Membro excluído com sucesso!');
+                    loadMembros();
+                } else {
+                    alert(data.error || 'Erro ao excluir membro');
+                }
+            } catch (error) {
+                alert('Erro de conexão: ' + error.message);
+            }
+        }
+
         // Carregar Rotas
         async function loadRotas() {
             try {
@@ -2994,8 +3019,8 @@ let editingEncomendaId = null;
             
             console.log('=== TABELA RENDERIZADA COM SUCESSO ===');
         }
-        
-        // Função para atualizar estatísticas das encomendas
+
+        // Função para carregar rotasticas das encomendas
         function updateEncomendasStats(total, pendentes, entregues, totalComissoes) {
             const totalEl = document.getElementById('totalEncomendas');
             const pendentesEl = document.getElementById('encomendasPendentes');
