@@ -8,7 +8,7 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 // Chave secreta utilizada para assinar tokens JWT. Deve ser definida via variável de ambiente em produção.
 const JWT_SECRET = process.env.JWT_SECRET || 'faccao_control_secret_key_2025';
 
