@@ -300,6 +300,21 @@ function initDatabase() {
                 FOREIGN KEY (lider_id) REFERENCES usuarios(id)
             )`);
 
+            // Histórico de alterações do inventário da família: registra todas as
+            // modificações feitas no estoque com informações de auditoria.
+            db.run(`CREATE TABLE IF NOT EXISTS historico_inventario_familia (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_id INTEGER NOT NULL,
+                usuario_id INTEGER NOT NULL,
+                usuario_nome TEXT NOT NULL,
+                quantidade_anterior INTEGER NOT NULL,
+                quantidade_nova INTEGER NOT NULL,
+                motivo TEXT NOT NULL,
+                data_alteracao DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (item_id) REFERENCES inventario_familia(id),
+                FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+            )`);
+
             // Preenche o inventário da família com categorias e itens padrão, se
             // ainda não existirem.  As quantidades iniciais são 0 e o preço
             // inicial é 0. Use INSERT OR IGNORE para evitar duplicatas caso
@@ -354,7 +369,6 @@ function initDatabase() {
                 { categoria: 'Equipamentos', item: 'Vaselina' },
                 { categoria: 'Equipamentos', item: 'Rastreador' },
                 // Acessórios
-                { categoria: 'Acessórios', item: 'Attats' },
                 { categoria: 'Acessórios', item: 'Supressor' },
                 { categoria: 'Acessórios', item: 'Grip avançado' },
                 { categoria: 'Acessórios', item: 'Compensador' },
@@ -1801,10 +1815,35 @@ app.get('/api/inventario-familia', authenticateToken, (req, res) => {
 });
 
 /**
+ * Obtém o histórico de alterações do inventário da família. Apenas administradores
+ * ou líderes podem consultar esta rota. Retorna as alterações ordenadas por data
+ * mais recente primeiro.
+ */
+app.get('/api/inventario-familia/historico', authenticateToken, (req, res) => {
+    const role = req.user && req.user.role;
+    if (role !== 'admin' && role !== 'lider') {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
+    const sql = `
+        SELECT h.*, i.categoria, COALESCE(i.item, i.subcategoria) AS item
+        FROM historico_inventario_familia h
+        JOIN inventario_familia i ON i.id = h.item_id
+        ORDER BY h.data_alteracao DESC
+        LIMIT 100
+    `;
+    db.all(sql, (err, rows) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json(rows);
+    });
+});
+
+/**
  * Cria um novo item no inventário da família ou atualiza a quantidade de um
  * item existente. Apenas administradores ou líderes podem adicionar ou
  * modificar itens no inventário da família. O corpo da requisição deve
- * conter: categoria, subcategoria, quantidade e opcionalmente preco. Se
+ * conter: categoria, subcategoria, quantidade, motivo e opcionalmente preco. Se
  * houver um item já cadastrado com a mesma combinação de categoria e
  * subcategoria, a quantidade será incrementada; caso contrário, o item será
  * criado. Retorna os dados do item inserido/atualizado.
@@ -1814,11 +1853,14 @@ app.post('/api/inventario-familia', authenticateToken, (req, res) => {
     if (role !== 'admin' && role !== 'lider') {
         return res.status(403).json({ error: 'Acesso negado' });
     }
-    const { categoria, item, quantidade, preco } = req.body;
+    const { categoria, item, quantidade, preco, motivo } = req.body;
     const qtd = parseInt(quantidade);
     const price = preco !== undefined && preco !== null ? parseFloat(preco) : null;
     if (!categoria || !item || isNaN(qtd) || qtd < 0) {
         return res.status(400).json({ error: 'Categoria, item e quantidade válidas são obrigatórias' });
+    }
+    if (!motivo || motivo.trim() === '') {
+        return res.status(400).json({ error: 'Motivo da alteração é obrigatório' });
     }
     // Tenta atualizar um item existente; se nenhum item for atualizado,
     // insere um novo registro.
@@ -1827,12 +1869,20 @@ app.post('/api/inventario-familia', authenticateToken, (req, res) => {
             return res.status(500).json({ error: err.message });
         }
         if (existing) {
+            const quantidadeAnterior = existing.quantidade;
             const newQty = existing.quantidade + qtd;
             const newPrice = price !== null ? price : existing.preco;
             db.run('UPDATE inventario_familia SET quantidade = ?, preco = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE id = ?', [newQty, newPrice, existing.id], function (updateErr) {
                 if (updateErr) {
                     return res.status(500).json({ error: updateErr.message });
                 }
+                // Registra no histórico de alterações
+                db.run('INSERT INTO historico_inventario_familia (item_id, usuario_id, usuario_nome, quantidade_anterior, quantidade_nova, motivo) VALUES (?, ?, ?, ?, ?, ?)', 
+                    [existing.id, req.user.id, req.user.username, quantidadeAnterior, newQty, motivo.trim()], function(histErr) {
+                    if (histErr) {
+                        console.error('Erro ao registrar histórico:', histErr.message);
+                    }
+                });
                 db.get('SELECT * FROM inventario_familia WHERE id = ?', [existing.id], (selErr, updated) => {
                     if (selErr) {
                         return res.status(500).json({ error: selErr.message });
@@ -1848,6 +1898,13 @@ app.post('/api/inventario-familia', authenticateToken, (req, res) => {
                 if (insertErr) {
                     return res.status(500).json({ error: insertErr.message });
                 }
+                // Registra no histórico de alterações (novo item)
+                db.run('INSERT INTO historico_inventario_familia (item_id, usuario_id, usuario_nome, quantidade_anterior, quantidade_nova, motivo) VALUES (?, ?, ?, ?, ?, ?)', 
+                    [this.lastID, req.user.id, req.user.username, 0, qtd, motivo.trim()], function(histErr) {
+                    if (histErr) {
+                        console.error('Erro ao registrar histórico:', histErr.message);
+                    }
+                });
                 db.get('SELECT * FROM inventario_familia WHERE id = ?', [this.lastID], (selErr, newItem) => {
                     if (selErr) {
                         return res.status(500).json({ error: selErr.message });
@@ -1862,7 +1919,7 @@ app.post('/api/inventario-familia', authenticateToken, (req, res) => {
 /**
  * Atualiza a quantidade e/ou o preço de um item existente no inventário da
  * família. Apenas administradores ou líderes podem realizar esta operação.
- * A rota aceita campos opcionais `quantidade` e `preco`; se um dos campos
+ * A rota aceita campos opcionais `quantidade`, `preco` e obrigatório `motivo`; se um dos campos
  * não for fornecido, permanece inalterado. O status atual do item é
  * retornado após a atualização.
  */
@@ -1874,8 +1931,12 @@ app.put('/api/inventario-familia/:id', authenticateToken, (req, res) => {
     const id = parseInt(req.params.id);
     const qtd = req.body.quantidade !== undefined ? parseInt(req.body.quantidade) : null;
     const price = req.body.preco !== undefined ? parseFloat(req.body.preco) : null;
+    const motivo = req.body.motivo;
     if (isNaN(id)) {
         return res.status(400).json({ error: 'ID inválido' });
+    }
+    if (!motivo || motivo.trim() === '') {
+        return res.status(400).json({ error: 'Motivo da alteração é obrigatório' });
     }
     // Verifica se o item existe
     db.get('SELECT * FROM inventario_familia WHERE id = ?', [id], (err, existing) => {
@@ -1885,11 +1946,21 @@ app.put('/api/inventario-familia/:id', authenticateToken, (req, res) => {
         if (!existing) {
             return res.status(404).json({ error: 'Item não encontrado' });
         }
+        const quantidadeAnterior = existing.quantidade;
         const newQty = qtd !== null ? qtd : existing.quantidade;
         const newPrice = price !== null ? price : existing.preco;
         db.run('UPDATE inventario_familia SET quantidade = ?, preco = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE id = ?', [newQty, newPrice, id], function (updateErr) {
             if (updateErr) {
                 return res.status(500).json({ error: updateErr.message });
+            }
+            // Registra no histórico apenas se a quantidade foi alterada
+            if (quantidadeAnterior !== newQty) {
+                db.run('INSERT INTO historico_inventario_familia (item_id, usuario_id, usuario_nome, quantidade_anterior, quantidade_nova, motivo) VALUES (?, ?, ?, ?, ?, ?)', 
+                    [id, req.user.id, req.user.username, quantidadeAnterior, newQty, motivo.trim()], function(histErr) {
+                    if (histErr) {
+                        console.error('Erro ao registrar histórico:', histErr.message);
+                    }
+                });
             }
             db.get('SELECT * FROM inventario_familia WHERE id = ?', [id], (selErr, updated) => {
                 if (selErr) {
