@@ -130,26 +130,6 @@ function initDatabase() {
                 }
             });
 
-            // Remove rotas duplicadas mantendo apenas o primeiro registro para cada
-            // combinação (membro_id, data_entrega). Sem esta remoção, a criação
-            // do índice único abaixo poderia falhar se houver duplicidades já
-            // cadastradas.
-            db.run(`DELETE FROM rotas
-                    WHERE rowid NOT IN (SELECT MIN(rowid) FROM rotas GROUP BY membro_id, data_entrega)`, (err) => {
-                if (err) {
-                    console.error('Erro ao remover duplicatas de rotas:', err.message);
-                }
-                // Cria um índice único para impedir a criação de mais de uma rota
-                // para o mesmo membro e data de entrega.  Isso garante que
-                // generateRotasParaProximaSemana() não insira rotas duplicadas
-                // quando o servidor reinicia.
-                db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_rotas_membro_data ON rotas(membro_id, data_entrega)', (idxErr) => {
-                    if (idxErr) {
-                        console.error('Erro ao criar índice único em rotas:', idxErr.message);
-                    }
-                });
-            });
-
             // Tabela de encomendas
             db.run(`CREATE TABLE IF NOT EXISTS encomendas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -191,26 +171,19 @@ function initDatabase() {
                 data_atualizacao DATETIME DEFAULT CURRENT_TIMESTAMP
             )`);
 
-            // Antes de criar o índice único no estoque, remova eventuais registros
-            // duplicados de (tipo, nome). Caso duplicatas existam, a criação do
-            // índice único falharia com um erro de violação de restrição, o que
-            // impediria a remoção posterior. Para garantir que o índice seja
-            // criado sem erros, primeiro eliminamos todas as duplicatas
-            // preservando o registro de menor rowid para cada par (tipo, nome).
-            db.run(`DELETE FROM estoque
-                    WHERE rowid NOT IN (SELECT MIN(rowid) FROM estoque GROUP BY tipo, nome)`, (delErr) => {
-                if (delErr) {
-                    console.error('Erro ao remover duplicatas do estoque:', delErr.message);
+            // Cria um índice único para evitar duplicidades de (tipo, nome) no estoque.  
+            db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_estoque_tipo_nome ON estoque(tipo, nome)', (err) => {
+                if (err) {
+                    console.error('Erro ao criar índice único em estoque:', err.message);
+                } else {
+                    // Remove linhas duplicadas mantendo apenas o primeiro registro (menor rowid)
+                    db.run(`DELETE FROM estoque
+                            WHERE rowid NOT IN (SELECT MIN(rowid) FROM estoque GROUP BY tipo, nome)`, (delErr) => {
+                        if (delErr) {
+                            console.error('Erro ao remover duplicatas do estoque:', delErr.message);
+                        }
+                    });
                 }
-                // Depois de garantir que não há registros duplicados, cria o índice
-                // único. Se o índice já existir, nada é feito. Se ainda não existir,
-                // ele será criado sem violar a restrição, pois não há mais
-                // duplicatas.
-                db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_estoque_tipo_nome ON estoque(tipo, nome)', (idxErr) => {
-                    if (idxErr) {
-                        console.error('Erro ao criar índice único em estoque:', idxErr.message);
-                    }
-                });
             });
 
             // Tabela de imagens
@@ -240,133 +213,6 @@ function initDatabase() {
                 nome TEXT NOT NULL UNIQUE,
                 data_criacao DATETIME DEFAULT CURRENT_TIMESTAMP
             )`);
-
-            // -------------------------------------------------------------------
-            // Tabelas de Inventário da Família e Requisições de Itens
-            // -------------------------------------------------------------------
-            // Inventário da família: itens agrupados por categoria e item. Não há
-            // mais conceito de subcategoria; cada registro associa um item a uma
-            // categoria.  Um índice único em (categoria, item) impede
-            // duplicidades.
-            db.run(`CREATE TABLE IF NOT EXISTS inventario_familia (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                categoria TEXT NOT NULL,
-                -- "item" representa o nome do produto. Mantemos também a coluna
-                -- "subcategoria" por compatibilidade com versões anteriores. As duas
-                -- colunas armazenam o mesmo valor.
-                item TEXT,
-                subcategoria TEXT,
-                quantidade INTEGER DEFAULT 0,
-                preco REAL DEFAULT 0,
-                data_atualizacao DATETIME DEFAULT CURRENT_TIMESTAMP
-            )`);
-            // Garante a existência das colunas item e subcategoria. Caso a
-            // tabela já exista mas falte alguma delas, adiciona a coluna.
-            db.run('ALTER TABLE inventario_familia ADD COLUMN item TEXT', (err) => {
-                if (err && !/duplicate column/i.test(err.message)) {
-                    console.error('Erro ao adicionar coluna item em inventario_familia:', err.message);
-                }
-            });
-            db.run('ALTER TABLE inventario_familia ADD COLUMN subcategoria TEXT', (err) => {
-                if (err && !/duplicate column/i.test(err.message)) {
-                    console.error('Erro ao adicionar coluna subcategoria em inventario_familia:', err.message);
-                }
-            });
-            // Copia valores entre item e subcategoria se algum estiver nulo. Essa
-            // sincronização garante compatibilidade com registros antigos.
-            db.run(`UPDATE inventario_familia SET item = subcategoria WHERE (item IS NULL OR item = '') AND subcategoria IS NOT NULL`);
-            db.run(`UPDATE inventario_familia SET subcategoria = item WHERE (subcategoria IS NULL OR subcategoria = '') AND item IS NOT NULL`);
-            // Índice único para evitar duplicidade (categoria, item)
-            db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_inventario_cat_item ON inventario_familia(categoria, item)');
-
-            // Requisições de itens da família: registra pedidos de membros/gerentes
-            // e o processamento por líderes ou administradores.
-            db.run(`CREATE TABLE IF NOT EXISTS requisicoes_familia (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                item_id INTEGER NOT NULL,
-                membro_id INTEGER,
-                solicitante_nome TEXT,
-                solicitante_cargo TEXT,
-                solicitante_rg TEXT,
-                solicitante_telefone TEXT,
-                quantidade INTEGER NOT NULL,
-                status TEXT DEFAULT 'pendente',
-                lider_id INTEGER,
-                data_solicitacao DATETIME DEFAULT CURRENT_TIMESTAMP,
-                data_resposta DATETIME,
-                data_entrega DATETIME,
-                FOREIGN KEY (item_id) REFERENCES inventario_familia(id),
-                FOREIGN KEY (membro_id) REFERENCES membros(id),
-                FOREIGN KEY (lider_id) REFERENCES usuarios(id)
-            )`);
-
-            // Preenche o inventário da família com categorias e itens padrão, se
-            // ainda não existirem.  As quantidades iniciais são 0 e o preço
-            // inicial é 0. Use INSERT OR IGNORE para evitar duplicatas caso
-            // os itens já tenham sido cadastrados.
-            const itensFamilia = [
-                // Produtos Comprados
-                { categoria: 'Produtos Comprados', item: 'Erva' },
-                { categoria: 'Produtos Comprados', item: 'Farinha' },
-                { categoria: 'Produtos Comprados', item: 'Lança' },
-                { categoria: 'Produtos Comprados', item: 'Viagra' },
-                { categoria: 'Produtos Comprados', item: 'H.' },
-                { categoria: 'Produtos Comprados', item: 'Oxy' },
-                { categoria: 'Produtos Comprados', item: 'Balinha' },
-                { categoria: 'Produtos Comprados', item: 'Rapé' },
-                // Produtos para Roubo
-                { categoria: 'Produtos para Roubo', item: 'C4' },
-                { categoria: 'Produtos para Roubo', item: 'Masterpick' },
-                // Produtos de Ação Fechada
-                { categoria: 'Produtos de Ação Fechada', item: 'MK1' },
-                { categoria: 'Produtos de Ação Fechada', item: 'MK2' },
-                { categoria: 'Produtos de Ação Fechada', item: 'MK3' },
-                { categoria: 'Produtos de Ação Fechada', item: 'MK4' },
-                { categoria: 'Produtos de Ação Fechada', item: 'MK5' },
-                { categoria: 'Produtos de Ação Fechada', item: 'Chave Ouro' },
-                { categoria: 'Produtos de Ação Fechada', item: 'Chave Platina' },
-                // Produtos de Ação - Pistolas
-                { categoria: 'Produtos de Ação - Pistolas', item: 'Five' },
-                { categoria: 'Produtos de Ação - Pistolas', item: 'Desert' },
-                { categoria: 'Produtos de Ação - Pistolas', item: '.45 acb' },
-                { categoria: 'Produtos de Ação - Pistolas', item: 'colt 45' },
-                { categoria: 'Produtos de Ação - Pistolas', item: 'm1911' },
-                // Produtos de Ação - Sub-metralhadora
-                { categoria: 'Produtos de Ação - Sub-metralhadora', item: 'Mtar' },
-                { categoria: 'Produtos de Ação - Sub-metralhadora', item: 'Tec-9' },
-                { categoria: 'Produtos de Ação - Sub-metralhadora', item: 'Mini uzi' },
-                { categoria: 'Produtos de Ação - Sub-metralhadora', item: 'M-tar 21' },
-                // Produtos de Ação - Fuzil
-                { categoria: 'Produtos de Ação - Fuzil', item: 'AK 103' },
-                { categoria: 'Produtos de Ação - Fuzil', item: 'AUG' },
-                { categoria: 'Produtos de Ação - Fuzil', item: 'AK 47' },
-                { categoria: 'Produtos de Ação - Fuzil', item: 'M16' },
-                // Produtos de Ação - Escopeta
-                { categoria: 'Produtos de Ação - Escopeta', item: 'spas 12' },
-                // Equipamentos diversos
-                { categoria: 'Equipamentos', item: 'Pager' },
-                { categoria: 'Equipamentos', item: 'Camisa de Força' },
-                { categoria: 'Equipamentos', item: 'Algema' },
-                { categoria: 'Equipamentos', item: 'Capuz' },
-                { categoria: 'Equipamentos', item: 'Adrenalina' },
-                { categoria: 'Equipamentos', item: 'Colete' },
-                { categoria: 'Equipamentos', item: 'Placa' },
-                { categoria: 'Equipamentos', item: 'Vaselina' },
-                { categoria: 'Equipamentos', item: 'Rastreador' },
-                // Acessórios
-                { categoria: 'Acessórios', item: 'Attats' },
-                { categoria: 'Acessórios', item: 'Supressor' },
-                { categoria: 'Acessórios', item: 'Grip avançado' },
-                { categoria: 'Acessórios', item: 'Compensador' },
-                { categoria: 'Acessórios', item: 'Clipe extendido' },
-                { categoria: 'Acessórios', item: 'Lanterna' }
-            ];
-            itensFamilia.forEach(item => {
-                // Insere o valor tanto em "item" quanto em "subcategoria" para
-                // manter compatibilidade. Caso já exista, a inserção é ignorada.
-                db.run('INSERT OR IGNORE INTO inventario_familia (categoria, item, subcategoria, quantidade, preco) VALUES (?, ?, ?, 0, 0)',
-                    [item.categoria, item.item, item.item]);
-            });
 
             // Tabela de configuração geral. Armazena chaves de configuração como a taxa de comissão.
             db.run(`CREATE TABLE IF NOT EXISTS config (
@@ -486,29 +332,37 @@ async function generateRotasParaProximaSemana() {
             datas.push(isoDate);
         }
 
-        // Buscar todos os membros ativos que tenham o cargo 'membro'. Somente
-        // membros (e não gerentes/líderes) recebem rotas pendentes
+        // Buscar todos os membros ativos que tenham o cargo 'membro'
+        // Somente membros (e não gerentes/líderes) devem receber rotas pendentes automaticamente
         db.all('SELECT id, nome FROM membros WHERE ativo = 1 AND cargo = "membro"', (err, membros) => {
             if (err) {
                 console.error('Erro ao consultar membros para geração de rotas:', err.message);
                 return reject(err);
             }
+            // Para cada membro e cada data, criar rota se não existir
             let pendentes = 0;
-            // Para cada membro e cada data, tenta inserir a rota.  Se já
-            // existir uma rota para a combinação (membro_id, data_entrega), a
-            // inserção será ignorada por causa do índice único idx_rotas_membro_data.
             membros.forEach(membro => {
                 datas.forEach(dataEntrega => {
-                    db.run('INSERT OR IGNORE INTO rotas (membro_id, membro_nome, quantidade, data_entrega, status) VALUES (?, ?, ?, ?, ?)',
-                        [membro.id, membro.nome, 0, dataEntrega, 'pendente'], function(err2) {
-                            if (err2) {
-                                console.error('Erro ao inserir rota pendente:', err2.message);
-                            } else if (this.changes > 0) {
-                                pendentes++;
-                            }
-                        });
+                    db.get('SELECT id FROM rotas WHERE membro_id = ? AND data_entrega = ?', [membro.id, dataEntrega], (err2, row) => {
+                        if (err2) {
+                            console.error('Erro ao verificar rotas existentes:', err2.message);
+                            return;
+                        }
+                        if (!row) {
+                            // Inserir rota pendente com quantidade zero
+                            db.run('INSERT INTO rotas (membro_id, membro_nome, quantidade, data_entrega, status) VALUES (?, ?, ?, ?, ?)',
+                                [membro.id, membro.nome, 0, dataEntrega, 'pendente'], function (err3) {
+                                    if (err3) {
+                                        console.error('Erro ao inserir rota pendente:', err3.message);
+                                    } else {
+                                        pendentes++;
+                                    }
+                                });
+                        }
+                    });
                 });
             });
+            // Não esperamos todas as inserções terminarem (assíncronas), apenas registra
             console.log(`Rotas geradas/atualizadas para a próxima semana: ${pendentes}`);
             resolve();
         });
@@ -1779,426 +1633,6 @@ app.post('/api/familias', authenticateToken, (req, res) => {
     });
 });
 
-// ===========================================================================
-// Rotas para Inventário da Família e Requisições
-// ===========================================================================
-
-/**
- * Obtém todos os itens do inventário da família. Qualquer usuário logado pode
- * consultar esta rota. Os itens são retornados como um array de objetos com
- * campos: id, categoria, subcategoria, quantidade e preco.
- */
-app.get('/api/inventario-familia', authenticateToken, (req, res) => {
-    // Lista todos os itens do inventário, ordenados por categoria e item. Não
-    // existe mais o campo subcategoria.
-    // Seleciona id, categoria, item (preferencialmente coluna item; se nula, usa subcategoria), quantidade e preco.
-    db.all('SELECT id, categoria, COALESCE(item, subcategoria) AS item, quantidade, preco, data_atualizacao FROM inventario_familia ORDER BY categoria, item', (err, rows) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
-        res.json(rows);
-    });
-});
-
-/**
- * Cria um novo item no inventário da família ou atualiza a quantidade de um
- * item existente. Apenas administradores ou líderes podem adicionar ou
- * modificar itens no inventário da família. O corpo da requisição deve
- * conter: categoria, subcategoria, quantidade e opcionalmente preco. Se
- * houver um item já cadastrado com a mesma combinação de categoria e
- * subcategoria, a quantidade será incrementada; caso contrário, o item será
- * criado. Retorna os dados do item inserido/atualizado.
- */
-app.post('/api/inventario-familia', authenticateToken, (req, res) => {
-    const role = req.user && req.user.role;
-    if (role !== 'admin' && role !== 'lider') {
-        return res.status(403).json({ error: 'Acesso negado' });
-    }
-    const { categoria, item, quantidade, preco } = req.body;
-    const qtd = parseInt(quantidade);
-    const price = preco !== undefined && preco !== null ? parseFloat(preco) : null;
-    if (!categoria || !item || isNaN(qtd) || qtd < 0) {
-        return res.status(400).json({ error: 'Categoria, item e quantidade válidas são obrigatórias' });
-    }
-    // Tenta atualizar um item existente; se nenhum item for atualizado,
-    // insere um novo registro.
-    db.get('SELECT * FROM inventario_familia WHERE categoria = ? AND (item = ? OR subcategoria = ?)', [categoria, item, item], (err, existing) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
-        if (existing) {
-            const newQty = existing.quantidade + qtd;
-            const newPrice = price !== null ? price : existing.preco;
-            db.run('UPDATE inventario_familia SET quantidade = ?, preco = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE id = ?', [newQty, newPrice, existing.id], function (updateErr) {
-                if (updateErr) {
-                    return res.status(500).json({ error: updateErr.message });
-                }
-                db.get('SELECT * FROM inventario_familia WHERE id = ?', [existing.id], (selErr, updated) => {
-                    if (selErr) {
-                        return res.status(500).json({ error: selErr.message });
-                    }
-                    return res.json(updated);
-                });
-            });
-        } else {
-            const insertPrice = price !== null ? price : 0;
-            // Insere item preenchendo tanto a coluna item quanto a subcategoria, para garantir
-            // compatibilidade com esquemas antigos.
-            db.run('INSERT INTO inventario_familia (categoria, item, subcategoria, quantidade, preco) VALUES (?, ?, ?, ?, ?)', [categoria, item, item, qtd, insertPrice], function (insertErr) {
-                if (insertErr) {
-                    return res.status(500).json({ error: insertErr.message });
-                }
-                db.get('SELECT * FROM inventario_familia WHERE id = ?', [this.lastID], (selErr, newItem) => {
-                    if (selErr) {
-                        return res.status(500).json({ error: selErr.message });
-                    }
-                    res.json(newItem);
-                });
-            });
-        }
-    });
-});
-
-/**
- * Atualiza a quantidade e/ou o preço de um item existente no inventário da
- * família. Apenas administradores ou líderes podem realizar esta operação.
- * A rota aceita campos opcionais `quantidade` e `preco`; se um dos campos
- * não for fornecido, permanece inalterado. O status atual do item é
- * retornado após a atualização.
- */
-app.put('/api/inventario-familia/:id', authenticateToken, (req, res) => {
-    const role = req.user && req.user.role;
-    if (role !== 'admin' && role !== 'lider') {
-        return res.status(403).json({ error: 'Acesso negado' });
-    }
-    const id = parseInt(req.params.id);
-    const qtd = req.body.quantidade !== undefined ? parseInt(req.body.quantidade) : null;
-    const price = req.body.preco !== undefined ? parseFloat(req.body.preco) : null;
-    if (isNaN(id)) {
-        return res.status(400).json({ error: 'ID inválido' });
-    }
-    // Verifica se o item existe
-    db.get('SELECT * FROM inventario_familia WHERE id = ?', [id], (err, existing) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
-        if (!existing) {
-            return res.status(404).json({ error: 'Item não encontrado' });
-        }
-        const newQty = qtd !== null ? qtd : existing.quantidade;
-        const newPrice = price !== null ? price : existing.preco;
-        db.run('UPDATE inventario_familia SET quantidade = ?, preco = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE id = ?', [newQty, newPrice, id], function (updateErr) {
-            if (updateErr) {
-                return res.status(500).json({ error: updateErr.message });
-            }
-            db.get('SELECT * FROM inventario_familia WHERE id = ?', [id], (selErr, updated) => {
-                if (selErr) {
-                    return res.status(500).json({ error: selErr.message });
-                }
-                res.json(updated);
-            });
-        });
-    });
-});
-
-/**
- * Cria uma requisição de item do inventário da família. Apenas membros ou
- * gerentes podem criar requisições; líderes e administradores não devem
- * solicitar itens desta forma. O corpo da requisição deve conter
- * `item_id` e `quantidade`. O servidor registra informações do
- * solicitante (nome, cargo, RG e telefone) a partir da tabela de membros
- * associada ao usuário logado. Se o usuário não tiver um cadastro de
- * membro, os campos de contato devem ser fornecidos manualmente.
- */
-app.post('/api/requisicoes-familia', authenticateToken, (req, res) => {
-    const { item_id, quantidade, solicitante_nome, solicitante_cargo, solicitante_rg, solicitante_telefone } = req.body;
-    const qty = parseInt(quantidade);
-    if (isNaN(item_id) || isNaN(qty) || qty <= 0) {
-        return res.status(400).json({ error: 'Item e quantidade válidos são obrigatórios' });
-    }
-    // Somente membros ou gerentes podem criar requisições
-    const role = req.user && req.user.role;
-    if (role === 'admin' || role === 'lider') {
-        return res.status(403).json({ error: 'Líderes e administradores não podem solicitar itens' });
-    }
-    // Verifica se o item existe no inventário
-    db.get('SELECT * FROM inventario_familia WHERE id = ?', [item_id], (err, item) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
-        if (!item) {
-            return res.status(404).json({ error: 'Item não encontrado no inventário da família' });
-        }
-        // Buscar informações do membro associado ao usuário (se existir)
-        db.get('SELECT id, nome, rg, telefone, cargo FROM membros WHERE usuario_id = ?', [req.user.id], (memberErr, member) => {
-            if (memberErr) {
-                return res.status(500).json({ error: memberErr.message });
-            }
-            let nomeSolicitante = solicitante_nome;
-            let cargoSolicitante = solicitante_cargo;
-            let rgSolicitante = solicitante_rg;
-            let telefoneSolicitante = solicitante_telefone;
-            let membroId = null;
-            if (member) {
-                nomeSolicitante = member.nome;
-                cargoSolicitante = member.cargo;
-                rgSolicitante = member.rg;
-                telefoneSolicitante = member.telefone;
-                membroId = member.id;
-            }
-            db.run(`INSERT INTO requisicoes_familia (item_id, membro_id, solicitante_nome, solicitante_cargo, solicitante_rg, solicitante_telefone, quantidade, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'pendente')`,
-                [item_id, membroId, nomeSolicitante, cargoSolicitante, rgSolicitante, telefoneSolicitante, qty], function (insertErr) {
-                    if (insertErr) {
-                        return res.status(500).json({ error: insertErr.message });
-                    }
-                    db.get(`SELECT r.*, i.categoria, COALESCE(i.item, i.subcategoria) AS item
-                            FROM requisicoes_familia r
-                            JOIN inventario_familia i ON i.id = r.item_id
-                            WHERE r.id = ?`, [this.lastID], (selErr, reqRow) => {
-                        if (selErr) {
-                            return res.status(500).json({ error: selErr.message });
-                        }
-                        res.json(reqRow);
-                    });
-                }
-            );
-        });
-    });
-});
-
-/**
- * Lista as requisições de itens do inventário da família. Líderes e
- * administradores veem todas as requisições. Membros e gerentes veem
- * apenas as requisições que eles próprios criaram. Cada linha da
- * requisição inclui informações sobre o item, o solicitante e o líder
- * responsável (se houver).
- */
-app.get('/api/requisicoes-familia', authenticateToken, (req, res) => {
-    const role = req.user && req.user.role;
-    // Monta a consulta base com join para trazer categoria e subcategoria
-    let sql = `SELECT r.*, i.categoria, COALESCE(i.item, i.subcategoria) AS item, u.username AS lider_username
-               FROM requisicoes_familia r
-               JOIN inventario_familia i ON i.id = r.item_id
-               LEFT JOIN usuarios u ON u.id = r.lider_id`;
-    let params = [];
-    if (role !== 'admin' && role !== 'lider') {
-        // Restringe a requisições do próprio membro se não for líder/administrador
-        sql += ' WHERE r.membro_id = (SELECT id FROM membros WHERE usuario_id = ?)';
-        params.push(req.user.id);
-    }
-    db.all(sql, params, (err, rows) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
-        res.json(rows);
-    });
-});
-
-/**
- * Aprova uma requisição de item. Apenas líderes ou administradores podem
- * aprovar uma requisição. Esta ação não altera o estoque até que a
- * requisição seja marcada como entregue. É registrado o id do líder que
- * aprovou e a data de resposta.
- */
-app.put('/api/requisicoes-familia/:id/aprovar', authenticateToken, (req, res) => {
-    const role = req.user && req.user.role;
-    if (role !== 'admin' && role !== 'lider') {
-        return res.status(403).json({ error: 'Acesso negado' });
-    }
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) {
-        return res.status(400).json({ error: 'ID inválido' });
-    }
-    // Carrega a requisição
-    db.get('SELECT * FROM requisicoes_familia WHERE id = ?', [id], (err, reqRow) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
-        if (!reqRow) {
-            return res.status(404).json({ error: 'Requisição não encontrada' });
-        }
-        if (reqRow.status !== 'pendente') {
-            return res.status(400).json({ error: 'Apenas requisições pendentes podem ser aprovadas' });
-        }
-        db.run('UPDATE requisicoes_familia SET status = ?, lider_id = ?, data_resposta = CURRENT_TIMESTAMP WHERE id = ?', ['aprovado', req.user.id, id], function (updateErr) {
-            if (updateErr) {
-                return res.status(500).json({ error: updateErr.message });
-            }
-            db.get(`SELECT r.*, i.categoria, COALESCE(i.item, i.subcategoria) AS item, u.username AS lider_username
-                    FROM requisicoes_familia r
-                    JOIN inventario_familia i ON i.id = r.item_id
-                    LEFT JOIN usuarios u ON u.id = r.lider_id
-                    WHERE r.id = ?`, [id], (selErr, updated) => {
-                if (selErr) {
-                    return res.status(500).json({ error: selErr.message });
-                }
-                res.json(updated);
-            });
-        });
-    });
-});
-
-/**
- * Rejeita uma requisição de item. Apenas líderes ou administradores podem
- * rejeitar uma requisição. O status passa para "rejeitado" e registra
- * quem rejeitou e quando.
- */
-app.put('/api/requisicoes-familia/:id/rejeitar', authenticateToken, (req, res) => {
-    const role = req.user && req.user.role;
-    if (role !== 'admin' && role !== 'lider') {
-        return res.status(403).json({ error: 'Acesso negado' });
-    }
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) {
-        return res.status(400).json({ error: 'ID inválido' });
-    }
-    db.get('SELECT * FROM requisicoes_familia WHERE id = ?', [id], (err, reqRow) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
-        if (!reqRow) {
-            return res.status(404).json({ error: 'Requisição não encontrada' });
-        }
-        if (reqRow.status !== 'pendente') {
-            return res.status(400).json({ error: 'Apenas requisições pendentes podem ser rejeitadas' });
-        }
-        db.run('UPDATE requisicoes_familia SET status = ?, lider_id = ?, data_resposta = CURRENT_TIMESTAMP WHERE id = ?', ['rejeitado', req.user.id, id], function (updateErr) {
-            if (updateErr) {
-                return res.status(500).json({ error: updateErr.message });
-            }
-            db.get(`SELECT r.*, i.categoria, COALESCE(i.item, i.subcategoria) AS item, u.username AS lider_username
-                    FROM requisicoes_familia r
-                    JOIN inventario_familia i ON i.id = r.item_id
-                    LEFT JOIN usuarios u ON u.id = r.lider_id
-                    WHERE r.id = ?`, [id], (selErr, updated) => {
-                if (selErr) {
-                    return res.status(500).json({ error: selErr.message });
-                }
-                res.json(updated);
-            });
-        });
-    });
-});
-
-/**
- * Marca uma requisição aprovada como entregue. Apenas líderes ou
- * administradores podem marcar a entrega. Quando uma requisição é
- * entregue, a quantidade solicitada é baixada do inventário da família.
- */
-app.put('/api/requisicoes-familia/:id/entregar', authenticateToken, (req, res) => {
-    const role = req.user && req.user.role;
-    if (role !== 'admin' && role !== 'lider') {
-        return res.status(403).json({ error: 'Acesso negado' });
-    }
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) {
-        return res.status(400).json({ error: 'ID inválido' });
-    }
-    db.get('SELECT * FROM requisicoes_familia WHERE id = ?', [id], (err, reqRow) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
-        if (!reqRow) {
-            return res.status(404).json({ error: 'Requisição não encontrada' });
-        }
-        if (reqRow.status !== 'aprovado') {
-            return res.status(400).json({ error: 'Apenas requisições aprovadas podem ser entregues' });
-        }
-        // Verifica disponibilidade no inventário
-        db.get('SELECT * FROM inventario_familia WHERE id = ?', [reqRow.item_id], (itemErr, item) => {
-            if (itemErr) {
-                return res.status(500).json({ error: itemErr.message });
-            }
-            if (!item) {
-                return res.status(404).json({ error: 'Item não encontrado no inventário' });
-            }
-            if (item.quantidade < reqRow.quantidade) {
-                return res.status(400).json({ error: 'Quantidade insuficiente no inventário para entrega' });
-            }
-            // Subtrai a quantidade do inventário e marca a requisição como entregue
-            const novaQuantidade = item.quantidade - reqRow.quantidade;
-            db.run('UPDATE inventario_familia SET quantidade = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE id = ?', [novaQuantidade, item.id], function (updateInvErr) {
-                if (updateInvErr) {
-                    return res.status(500).json({ error: updateInvErr.message });
-                }
-                db.run('UPDATE requisicoes_familia SET status = ?, data_entrega = CURRENT_TIMESTAMP WHERE id = ?', ['entregue', id], function (updateReqErr) {
-                    if (updateReqErr) {
-                        return res.status(500).json({ error: updateReqErr.message });
-                    }
-            db.get(`SELECT r.*, i.categoria, COALESCE(i.item, i.subcategoria) AS item, u.username AS lider_username
-                    FROM requisicoes_familia r
-                    JOIN inventario_familia i ON i.id = r.item_id
-                    LEFT JOIN usuarios u ON u.id = r.lider_id
-                    WHERE r.id = ?`, [id], (selErr, updated) => {
-                        if (selErr) {
-                            return res.status(500).json({ error: selErr.message });
-                        }
-                        res.json(updated);
-                    });
-                });
-            });
-        });
-    });
-});
-
-/**
- * Cancela uma requisição entregue. Apenas líderes ou administradores podem
- * cancelar uma requisição já entregue. Ao cancelar, a quantidade é
- * devolvida ao inventário e o status passa para "cancelado".
- */
-app.put('/api/requisicoes-familia/:id/cancelar', authenticateToken, (req, res) => {
-    const role = req.user && req.user.role;
-    if (role !== 'admin' && role !== 'lider') {
-        return res.status(403).json({ error: 'Acesso negado' });
-    }
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) {
-        return res.status(400).json({ error: 'ID inválido' });
-    }
-    db.get('SELECT * FROM requisicoes_familia WHERE id = ?', [id], (err, reqRow) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
-        if (!reqRow) {
-            return res.status(404).json({ error: 'Requisição não encontrada' });
-        }
-        if (reqRow.status !== 'entregue') {
-            return res.status(400).json({ error: 'Apenas requisições entregues podem ser canceladas' });
-        }
-        // Devolve a quantidade ao inventário
-        db.get('SELECT * FROM inventario_familia WHERE id = ?', [reqRow.item_id], (itemErr, item) => {
-            if (itemErr) {
-                return res.status(500).json({ error: itemErr.message });
-            }
-            if (!item) {
-                return res.status(404).json({ error: 'Item não encontrado no inventário' });
-            }
-            const novaQuantidade = item.quantidade + reqRow.quantidade;
-            db.run('UPDATE inventario_familia SET quantidade = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE id = ?', [novaQuantidade, item.id], function (updateInvErr) {
-                if (updateInvErr) {
-                    return res.status(500).json({ error: updateInvErr.message });
-                }
-                db.run('UPDATE requisicoes_familia SET status = ? WHERE id = ?', ['cancelado', id], function (updateReqErr) {
-                    if (updateReqErr) {
-                        return res.status(500).json({ error: updateReqErr.message });
-                    }
-                    db.get(`SELECT r.*, i.categoria, COALESCE(i.item, i.subcategoria) AS item, u.username AS lider_username
-                            FROM requisicoes_familia r
-                            JOIN inventario_familia i ON i.id = r.item_id
-                            LEFT JOIN usuarios u ON u.id = r.lider_id
-                            WHERE r.id = ?`, [id], (selErr, updated) => {
-                        if (selErr) {
-                            return res.status(500).json({ error: selErr.message });
-                        }
-                        res.json(updated);
-                    });
-                });
-            });
-        });
-    });
-});
-
 // Rotas de relatórios
 app.get('/api/relatorios/geral', (req, res) => {
     const { periodo } = req.query;
@@ -2223,9 +1657,8 @@ async function startServer() {
     try {
         await initDatabase();
 
-        // A geração automática de rotas pendentes para a próxima semana foi
-        // removida a pedido do usuário.  Rotas serão criadas apenas
-        // manualmente ou por outras regras de negócio.
+        // Após inicializar o banco de dados, gera rotas pendentes para a próxima semana.
+        await generateRotasParaProximaSemana();
         
         app.listen(PORT, '0.0.0.0', () => {
             console.log(`🚀 Servidor rodando na porta ${PORT}`);
