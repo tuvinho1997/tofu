@@ -764,6 +764,7 @@
                                 <th>Item</th>
                                 <th>Quantidade</th>
                                 <th>Preço Unit.</th>
+                                <th>Ações</th>
                             </tr>
                         </thead>
                         <tbody id="inventarioFamiliaTableBody"></tbody>
@@ -842,6 +843,35 @@
                     <div style="text-align:right;">
                         <button class="btn-primary" onclick="submitNovaRequisicaoFamilia()">Enviar</button>
                         <button class="btn-secondary" onclick="closeModal('novaReqFamiliaModal')">Cancelar</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal para adicionar estoque a um item existente -->
+        <div id="adicionarEstoqueModal" class="modal">
+            <div class="modal-content">
+                <span class="close-btn" onclick="closeModal('adicionarEstoqueModal')">&times;</span>
+                <h3 style="margin-top:0">Adicionar Estoque</h3>
+                <div class="modal-body">
+                    <div style="margin-bottom:10px;">
+                        <label>Item:<br>
+                            <input type="text" id="estoqueItemNome" readonly style="width:100%; padding:4px; background-color: #34495e; color: #bdc3c7;">
+                        </label>
+                    </div>
+                    <div style="margin-bottom:10px;">
+                        <label>Quantidade Atual:<br>
+                            <input type="text" id="estoqueQuantidadeAtual" readonly style="width:100%; padding:4px; background-color: #34495e; color: #bdc3c7;">
+                        </label>
+                    </div>
+                    <div style="margin-bottom:10px;">
+                        <label>Quantidade a Adicionar:<br>
+                            <input type="number" id="estoqueQuantidadeAdicionar" min="1" value="1" style="width:100%; padding:4px;" required>
+                        </label>
+                    </div>
+                    <div style="text-align:right;">
+                        <button class="btn-primary" onclick="submitAdicionarEstoque()">Adicionar</button>
+                        <button class="btn-secondary" onclick="closeModal('adicionarEstoqueModal')">Cancelar</button>
                     </div>
                 </div>
             </div>
@@ -4479,22 +4509,29 @@ let editingEncomendaId = null;
             const body = document.getElementById('inventarioFamiliaTableBody');
             if (!body) return;
             body.innerHTML = '';
+            const user = currentUser || JSON.parse(localStorage.getItem('user') || '{}');
             // Agrupar por categoria
             const grouped = {};
             inventarioFamilia.forEach(item => {
                 if (!grouped[item.categoria]) grouped[item.categoria] = [];
                 grouped[item.categoria].push(item);
             });
-            // Para cada categoria, inserir linhas mostrando apenas categoria, item,
-            // quantidade e preço unitário
+            // Para cada categoria, inserir linhas mostrando categoria, item,
+            // quantidade, preço unitário e ações
             Object.keys(grouped).forEach(cat => {
                 grouped[cat].forEach(item => {
                     const tr = document.createElement('tr');
+                    let actionsHTML = '';
+                    // Botão "Adicionar Estoque" apenas para líderes e administradores
+                    if (user.role === 'admin' || user.role === 'lider') {
+                        actionsHTML = `<button class="btn-primary" onclick="openAdicionarEstoque(${item.id}, '${item.categoria}', '${item.item}')">Adicionar Estoque</button>`;
+                    }
                     tr.innerHTML = `
                         <td>${item.categoria}</td>
                         <td>${item.item}</td>
                         <td>${item.quantidade}</td>
-                        <td>R$ ${parseFloat(item.preco).toFixed(2)}</td>
+                        <td>R$ ${parseFloat(item.preco || 0).toFixed(2)}</td>
+                        <td>${actionsHTML}</td>
                     `;
                     body.appendChild(tr);
                 });
@@ -4771,6 +4808,74 @@ let editingEncomendaId = null;
                 });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error || 'Erro ao cancelar requisição');
+                loadInventarioFamilia();
+            } catch (error) {
+                alert(error.message);
+            }
+        }
+
+        /**
+         * Abre o modal para adicionar estoque a um item existente.
+         * Preenche os campos com as informações do item selecionado.
+         */
+        function openAdicionarEstoque(itemId, categoria, itemNome) {
+            // Encontra o item no inventário para obter a quantidade atual
+            const item = inventarioFamilia.find(i => i.id === itemId);
+            if (!item) {
+                alert('Item não encontrado');
+                return;
+            }
+            
+            // Preenche os campos do modal
+            document.getElementById('estoqueItemNome').value = `${categoria} - ${itemNome}`;
+            document.getElementById('estoqueQuantidadeAtual').value = item.quantidade;
+            document.getElementById('estoqueQuantidadeAdicionar').value = 1;
+            
+            // Armazena o ID do item para usar na submissão
+            document.getElementById('adicionarEstoqueModal').setAttribute('data-item-id', itemId);
+            
+            openModal('adicionarEstoqueModal');
+        }
+
+        /**
+         * Submete a adição de estoque para o servidor.
+         * Utiliza a mesma API de criação/atualização de item, passando a quantidade a ser adicionada.
+         */
+        async function submitAdicionarEstoque() {
+            const modal = document.getElementById('adicionarEstoqueModal');
+            const itemId = parseInt(modal.getAttribute('data-item-id'));
+            const quantidadeAdicionar = parseInt(document.getElementById('estoqueQuantidadeAdicionar').value);
+            
+            if (isNaN(quantidadeAdicionar) || quantidadeAdicionar <= 0) {
+                alert('Informe uma quantidade válida para adicionar');
+                return;
+            }
+            
+            // Encontra o item no inventário
+            const item = inventarioFamilia.find(i => i.id === itemId);
+            if (!item) {
+                alert('Item não encontrado');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/inventario-familia`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+                    },
+                    body: JSON.stringify({ 
+                        categoria: item.categoria, 
+                        item: item.item, 
+                        quantidade: quantidadeAdicionar,
+                        preco: item.preco
+                    })
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || 'Erro ao adicionar estoque');
+                alert(`Estoque adicionado com sucesso! ${quantidadeAdicionar} unidades adicionadas.`);
+                closeModal('adicionarEstoqueModal');
                 loadInventarioFamilia();
             } catch (error) {
                 alert(error.message);
