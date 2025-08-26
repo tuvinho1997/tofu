@@ -4427,13 +4427,14 @@ let editingEncomendaId = null;
                 if (!grouped[item.categoria]) grouped[item.categoria] = [];
                 grouped[item.categoria].push(item);
             });
-            // Para cada categoria, inserir linhas
+            // Para cada categoria, inserir linhas mostrando apenas categoria, item,
+            // quantidade e preço unitário
             Object.keys(grouped).forEach(cat => {
                 grouped[cat].forEach(item => {
                     const tr = document.createElement('tr');
                     tr.innerHTML = `
                         <td>${item.categoria}</td>
-                        <td>${item.subcategoria}</td>
+                        <td>${item.item}</td>
                         <td>${item.quantidade}</td>
                         <td>R$ ${parseFloat(item.preco).toFixed(2)}</td>
                     `;
@@ -4468,7 +4469,7 @@ let editingEncomendaId = null;
                 tr.innerHTML = `
                     <td>${req.solicitante_nome}</td>
                     <td>${req.solicitante_cargo || ''}</td>
-                    <td>${req.categoria} - ${req.subcategoria}</td>
+                    <td>${req.categoria} - ${req.item}</td>
                     <td>${req.quantidade}</td>
                     <td>${req.status}</td>
                     <td>${req.lider_username || '-'}</td>
@@ -4488,8 +4489,8 @@ let editingEncomendaId = null;
         async function createOrUpdateItemFamilia() {
             const categoria = prompt('Informe a categoria do item (ex.: Produtos Comprados, Produtos de Ação, etc.):');
             if (!categoria) return;
-            const subcategoria = prompt('Informe a subcategoria do item (nome do produto):');
-            if (!subcategoria) return;
+            const item = prompt('Informe o nome do item (produto):');
+            if (!item) return;
             const quantidadeStr = prompt('Informe a quantidade a adicionar:');
             const qtd = parseInt(quantidadeStr);
             if (isNaN(qtd) || qtd < 0) {
@@ -4505,7 +4506,7 @@ let editingEncomendaId = null;
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${localStorage.getItem('authToken')}`
                     },
-                    body: JSON.stringify({ categoria, subcategoria, quantidade: qtd, preco })
+                    body: JSON.stringify({ categoria, item, quantidade: qtd, preco })
                 });
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.error || 'Erro ao atualizar inventário');
@@ -4531,7 +4532,7 @@ let editingEncomendaId = null;
             // Constrói uma lista de opções para o prompt
             let itemList = 'Selecione o item desejado pelo número:\n';
             inventarioFamilia.forEach((item, idx) => {
-                itemList += `${idx + 1}. ${item.categoria} - ${item.subcategoria} (Qtd: ${item.quantidade})\n`;
+                itemList += `${idx + 1}. ${item.categoria} - ${item.item} (Qtd: ${item.quantidade})\n`;
             });
             const itemIndexStr = prompt(itemList);
             const index = parseInt(itemIndexStr) - 1;
