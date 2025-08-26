@@ -1,0 +1,8 @@
+/node_modules/
+/.idea/
+/index.js
+/index2.js
+/ordens_producao.json
+/ordens_producao.txt
+/package-lock.json
+/.env
