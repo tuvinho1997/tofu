@@ -755,20 +755,11 @@
                     </div>
                 </div>
                 <div id="inventarioFamiliaLoading" class="loading-message">Carregando...</div>
-                <div id="inventarioFamiliaContent" style="display:none;">
+                    <div id="inventarioFamiliaContent" style="display:none;">
                     <h4 style="color:#ecf0f1; margin-top: 0;">Itens do Inventário</h4>
-                    <table class="styled-table">
-                        <thead>
-                            <tr>
-                                <th>Categoria</th>
-                                <th>Item</th>
-                                <th>Quantidade</th>
-                                <th>Preço Unit.</th>
-                                <th>Ações</th>
-                            </tr>
-                        </thead>
-                        <tbody id="inventarioFamiliaTableBody"></tbody>
-                    </table>
+                    <div id="inventarioFamiliaGrid" style="margin-bottom: 20px;">
+                        <!-- Grid de categorias e itens será renderizado aqui -->
+                    </div>
                     <hr style="margin: 20px 0; border-color: #34495e;">
                     <h4 style="color:#ecf0f1;">Requisições de Itens</h4>
                     <div id="requisicoesFamiliaActions" style="margin-bottom:10px;"></div>
@@ -776,16 +767,16 @@
                         <thead>
                             <tr>
                                 <th>Solicitante</th>
-                                <th>Cargo</th>
                                 <th>Item</th>
                                 <th>Quantidade</th>
                                 <th>Status</th>
-                                <th>Líder</th>
+                                <th>Data</th>
                                 <th>Ações</th>
                             </tr>
                         </thead>
                         <tbody id="requisicoesFamiliaTableBody"></tbody>
                     </table>
+                </div>             </table>
                 </div>
             </div>
         </div>
@@ -816,6 +807,11 @@
                             <input type="number" id="addItemPreco" min="0" step="0.01" style="width:100%; padding:4px;">
                         </label>
                     </div>
+                    <div style="margin-bottom:10px;">
+                        <label>Motivo da alteração:<br>
+                            <textarea id="addItemMotivo" placeholder="Descreva o motivo da alteração no estoque" style="width:100%; padding:4px; height:60px; resize:vertical;" required></textarea>
+                        </label>
+                    </div>
                     <div style="text-align:right;">
                         <button class="btn-primary" onclick="submitAddItemFamilia()">Salvar</button>
                         <button class="btn-secondary" onclick="closeModal('addItemFamiliaModal')">Cancelar</button>
@@ -826,22 +822,42 @@
 
         <!-- Modal para nova requisição de item da Família -->
         <div id="novaReqFamiliaModal" class="modal">
-            <div class="modal-content">
+            <div class="modal-content" style="max-width: 600px;">
                 <span class="close-btn" onclick="closeModal('novaReqFamiliaModal')">&times;</span>
-                <h3 style="margin-top:0">Nova Requisição</h3>
+                <h3 style="margin-top:0">Nova Requisição de Material</h3>
                 <div class="modal-body">
-                    <div style="margin-bottom:10px;">
-                        <label>Item:<br>
-                            <select id="reqItemSelect" style="width:100%; padding:4px;"></select>
+                    <div style="margin-bottom:15px;">
+                        <label>Solicitante:<br>
+                            <select id="reqSolicitanteSelect" style="width:100%; padding:4px;" required>
+                                <option value="">Selecione o solicitante...</option>
+                            </select>
                         </label>
                     </div>
-                    <div style="margin-bottom:10px;">
-                        <label>Quantidade:<br>
-                            <input type="number" id="reqItemQuantidade" min="1" value="1" style="width:100%; padding:4px;" required>
-                        </label>
+                    
+                    <div style="margin-bottom:15px;">
+                        <h4 style="color:#ecf0f1; margin-bottom:10px;">Itens Solicitados</h4>
+                        <div id="reqItensContainer">
+                            <div class="req-item-row" style="display:grid; grid-template-columns: 2fr 1fr auto; gap:10px; margin-bottom:10px; align-items:end;">
+                                <div>
+                                    <label>Item:<br>
+                                        <select class="req-item-select" style="width:100%; padding:4px;"></select>
+                                    </label>
+                                </div>
+                                <div>
+                                    <label>Quantidade:<br>
+                                        <input type="number" class="req-item-quantidade" min="1" value="1" style="width:100%; padding:4px;" required>
+                                    </label>
+                                </div>
+                                <div>
+                                    <button type="button" class="btn-secondary" onclick="removeReqItem(this)" style="padding:4px 8px;">Remover</button>
+                                </div>
+                            </div>
+                        </div>
+                        <button type="button" class="btn-secondary" onclick="addReqItem()" style="margin-top:10px;">+ Adicionar Item</button>
                     </div>
+                    
                     <div style="text-align:right;">
-                        <button class="btn-primary" onclick="submitNovaRequisicaoFamilia()">Enviar</button>
+                        <button class="btn-primary" onclick="submitNovaRequisicaoFamilia()">Enviar Requisição</button>
                         <button class="btn-secondary" onclick="closeModal('novaReqFamiliaModal')">Cancelar</button>
                     </div>
                 </div>
@@ -867,6 +883,11 @@
                     <div style="margin-bottom:10px;">
                         <label>Quantidade a Adicionar:<br>
                             <input type="number" id="estoqueQuantidadeAdicionar" min="1" value="1" style="width:100%; padding:4px;" required>
+                        </label>
+                    </div>
+                    <div style="margin-bottom:10px;">
+                        <label>Motivo da alteração:<br>
+                            <textarea id="estoqueMotivo" placeholder="Descreva o motivo da alteração no estoque" style="width:100%; padding:4px; height:60px; resize:vertical;" required></textarea>
                         </label>
                     </div>
                     <div style="text-align:right;">
@@ -4501,38 +4522,83 @@ let editingEncomendaId = null;
         }
 
         /**
-         * Renderiza a tabela do inventário da família agrupando por categoria.
+         * Renderiza o inventário da família em formato de grid com categorias em linhas
+         * e itens em colunas, mostrando quantidade e ações para cada item.
          */
         function renderInventarioFamiliaTable() {
-            const body = document.getElementById('inventarioFamiliaTableBody');
-            if (!body) return;
-            body.innerHTML = '';
+            const grid = document.getElementById('inventarioFamiliaGrid');
+            if (!grid) return;
+            grid.innerHTML = '';
             const user = currentUser || JSON.parse(localStorage.getItem('user') || '{}');
+            
             // Agrupar por categoria
             const grouped = {};
             inventarioFamilia.forEach(item => {
                 if (!grouped[item.categoria]) grouped[item.categoria] = [];
                 grouped[item.categoria].push(item);
             });
-            // Para cada categoria, inserir linhas mostrando categoria, item,
-            // quantidade, preço unitário e ações
-            Object.keys(grouped).forEach(cat => {
-                grouped[cat].forEach(item => {
-                    const tr = document.createElement('tr');
-                    let actionsHTML = '';
-                    // Botão "Adicionar Estoque" apenas para líderes e administradores
-                    if (user.role === 'admin' || user.role === 'lider') {
-                        actionsHTML = `<button class="btn-primary" onclick="openAdicionarEstoque(${item.id}, '${item.categoria}', '${item.item}')">Adicionar Estoque</button>`;
+
+            // Criar grid para cada categoria
+            Object.keys(grouped).sort().forEach(categoria => {
+                const categorySection = document.createElement('div');
+                categorySection.style.cssText = 'margin-bottom: 25px; background: rgba(52, 73, 94, 0.3); border-radius: 8px; padding: 15px;';
+                
+                // Título da categoria
+                const categoryTitle = document.createElement('h5');
+                categoryTitle.textContent = categoria;
+                categoryTitle.style.cssText = 'color: #3498db; margin: 0 0 15px 0; font-size: 18px; font-weight: 600; border-bottom: 2px solid #3498db; padding-bottom: 5px;';
+                categorySection.appendChild(categoryTitle);
+                
+                // Grid de itens
+                const itemsGrid = document.createElement('div');
+                itemsGrid.style.cssText = 'display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px;';
+                
+                grouped[categoria].forEach(item => {
+                    const itemCard = document.createElement('div');
+                    itemCard.style.cssText = 'background: rgba(44, 62, 80, 0.6); border-radius: 6px; padding: 12px; border: 1px solid rgba(236, 240, 241, 0.1); transition: all 0.3s ease;';
+                    itemCard.onmouseover = () => itemCard.style.background = 'rgba(44, 62, 80, 0.8)';
+                    itemCard.onmouseout = () => itemCard.style.background = 'rgba(44, 62, 80, 0.6)';
+                    
+                    // Nome do item
+                    const itemName = document.createElement('div');
+                    itemName.textContent = item.item;
+                    itemName.style.cssText = 'color: #ecf0f1; font-weight: 600; margin-bottom: 8px; font-size: 14px;';
+                    itemCard.appendChild(itemName);
+                    
+                    // Quantidade
+                    const itemQty = document.createElement('div');
+                    itemQty.textContent = `Estoque: ${item.quantidade}`;
+                    itemQty.style.cssText = `color: ${item.quantidade > 0 ? '#2ecc71' : '#e74c3c'}; font-weight: 500; margin-bottom: 10px; font-size: 13px;`;
+                    itemCard.appendChild(itemQty);
+                    
+                    // Preço (se houver)
+                    if (item.preco && item.preco > 0) {
+                        const itemPrice = document.createElement('div');
+                        itemPrice.textContent = `R$ ${item.preco.toFixed(2)}`;
+                        itemPrice.style.cssText = 'color: #f39c12; font-size: 12px; margin-bottom: 10px;';
+                        itemCard.appendChild(itemPrice);
                     }
-                    tr.innerHTML = `
-                        <td>${item.categoria}</td>
-                        <td>${item.item}</td>
-                        <td>${item.quantidade}</td>
-                        <td>R$ ${parseFloat(item.preco || 0).toFixed(2)}</td>
-                        <td>${actionsHTML}</td>
-                    `;
-                    body.appendChild(tr);
+                    
+                    // Ações (apenas para admin e líder)
+                    if (user.role === 'admin' || user.role === 'lider') {
+                        const actionsDiv = document.createElement('div');
+                        actionsDiv.style.cssText = 'display: flex; gap: 5px; flex-wrap: wrap;';
+                        
+                        const addBtn = document.createElement('button');
+                        addBtn.textContent = '+ Estoque';
+                        addBtn.className = 'btn-primary';
+                        addBtn.style.cssText = 'font-size: 11px; padding: 4px 8px; flex: 1; min-width: 70px;';
+                        addBtn.onclick = () => openAdicionarEstoque(item.id, item.categoria, item.item);
+                        actionsDiv.appendChild(addBtn);
+                        
+                        itemCard.appendChild(actionsDiv);
+                    }
+                    
+                    itemsGrid.appendChild(itemCard);
                 });
+                
+                categorySection.appendChild(itemsGrid);
+                grid.appendChild(categorySection);
             });
         }
 
@@ -4667,6 +4733,7 @@ let editingEncomendaId = null;
             document.getElementById('addItemNome').value = '';
             document.getElementById('addItemQuantidade').value = 0;
             document.getElementById('addItemPreco').value = '';
+            document.getElementById('addItemMotivo').value = '';
             openModal('addItemFamiliaModal');
         }
 
@@ -4680,10 +4747,15 @@ let editingEncomendaId = null;
             const itemNome = document.getElementById('addItemNome').value.trim();
             const qtdStr = document.getElementById('addItemQuantidade').value;
             const precoStr = document.getElementById('addItemPreco').value;
+            const motivo = document.getElementById('addItemMotivo').value.trim();
             const quantidade = parseInt(qtdStr);
             const preco = precoStr !== '' ? parseFloat(precoStr) : null;
             if (!categoria || !itemNome || isNaN(quantidade) || quantidade < 0) {
                 alert('Preencha todos os campos obrigatórios corretamente');
+                return;
+            }
+            if (!motivo) {
+                alert('O motivo da alteração é obrigatório');
                 return;
             }
             try {
@@ -4693,7 +4765,7 @@ let editingEncomendaId = null;
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${localStorage.getItem('authToken')}`
                     },
-                    body: JSON.stringify({ categoria, item: itemNome, quantidade, preco })
+                    body: JSON.stringify({ categoria, item: itemNome, quantidade, preco, motivo })
                 });
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.error || 'Erro ao salvar item');
@@ -4706,51 +4778,205 @@ let editingEncomendaId = null;
         }
 
         /**
-         * Abre o modal para nova requisição. Preenche o seletor de itens com
-         * o inventário atual e zera o campo de quantidade.
+         * Abre o modal para nova requisição. Preenche o seletor de usuários e itens
+         * com os dados disponíveis e limpa os campos.
          */
-        function openNovaRequisicaoFamilia() {
-            const select = document.getElementById('reqItemSelect');
-            // Limpa opções existentes
-            select.innerHTML = '';
-            // Preenche com itens do inventário
-            if (inventarioFamilia && inventarioFamilia.length > 0) {
-                inventarioFamilia.forEach(it => {
-                    const opt = document.createElement('option');
-                    opt.value = it.id;
-                    opt.textContent = `${it.categoria} - ${it.item} (Qtd: ${it.quantidade})`;
-                    select.appendChild(opt);
-                });
-            }
-            document.getElementById('reqItemQuantidade').value = 1;
+        async function openNovaRequisicaoFamilia() {
+            // Carrega lista de usuários
+            await loadUsuariosForRequisicao();
+            
+            // Limpa container de itens e adiciona primeira linha
+            const container = document.getElementById('reqItensContainer');
+            container.innerHTML = `
+                <div class="req-item-row" style="display:grid; grid-template-columns: 2fr 1fr auto; gap:10px; margin-bottom:10px; align-items:end;">
+                    <div>
+                        <label>Item:<br>
+                            <select class="req-item-select" style="width:100%; padding:4px;"></select>
+                        </label>
+                    </div>
+                    <div>
+                        <label>Quantidade:<br>
+                            <input type="number" class="req-item-quantidade" min="1" value="1" style="width:100%; padding:4px;" required>
+                        </label>
+                    </div>
+                    <div>
+                        <button type="button" class="btn-secondary" onclick="removeReqItem(this)" style="padding:4px 8px;">Remover</button>
+                    </div>
+                </div>
+            `;
+            
+            // Preenche todos os selects com itens do inventário
+            populateReqItemSelects();
+            
             openModal('novaReqFamiliaModal');
         }
 
         /**
-         * Envia a requisição de item para o servidor. Utiliza o item
-         * selecionado e a quantidade informada. Se houver sucesso, fecha
-         * o modal e recarrega a lista de inventário e requisições.
+         * Carrega a lista de usuários para o select de solicitante
          */
-        async function submitNovaRequisicaoFamilia() {
-            const itemId = document.getElementById('reqItemSelect').value;
-            const qtdStr = document.getElementById('reqItemQuantidade').value;
-            const quantidade = parseInt(qtdStr);
-            if (!itemId || isNaN(quantidade) || quantidade <= 0) {
-                alert('Selecione um item e informe uma quantidade válida');
-                return;
-            }
+        async function loadUsuariosForRequisicao() {
             try {
-                const response = await fetch(`${API_BASE}/requisicoes-familia`, {
-                    method: 'POST',
+                const response = await fetch(`${API_BASE}/membros`, {
                     headers: {
-                        'Content-Type': 'application/json',
                         'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-                    },
-                    body: JSON.stringify({ item_id: parseInt(itemId), quantidade })
+                    }
                 });
                 const data = await response.json();
-                if (!response.ok) throw new Error(data.error || 'Erro ao criar requisição');
-                alert('Requisição criada com sucesso');
+                
+                const select = document.getElementById('reqSolicitanteSelect');
+                select.innerHTML = '<option value="">Selecione o solicitante...</option>';
+                
+                if (response.ok && data.length > 0) {
+                    data.forEach(usuario => {
+                        const option = document.createElement('option');
+                        option.value = usuario.id;
+                        option.textContent = `${usuario.nome} (${usuario.rg}) - ${usuario.telefone}`;
+                        option.setAttribute('data-nome', usuario.nome);
+                        option.setAttribute('data-rg', usuario.rg);
+                        option.setAttribute('data-telefone', usuario.telefone);
+                        select.appendChild(option);
+                    });
+                }
+            } catch (error) {
+                console.error('Erro ao carregar usuários:', error);
+                // Em caso de erro, permite digitação manual
+                const select = document.getElementById('reqSolicitanteSelect');
+                select.innerHTML = '<option value="">Erro ao carregar usuários</option>';
+            }
+        }
+
+        /**
+         * Preenche todos os selects de itens com o inventário disponível
+         */
+        function populateReqItemSelects() {
+            const selects = document.querySelectorAll('.req-item-select');
+            selects.forEach(select => {
+                select.innerHTML = '<option value="">Selecione um item...</option>';
+                if (inventarioFamilia && inventarioFamilia.length > 0) {
+                    inventarioFamilia.forEach(it => {
+                        const opt = document.createElement('option');
+                        opt.value = it.id;
+                        opt.textContent = `${it.categoria} - ${it.item} (Qtd: ${it.quantidade})`;
+                        select.appendChild(opt);
+                    });
+                }
+            });
+        }
+
+        /**
+         * Adiciona uma nova linha de item à requisição
+         */
+        function addReqItem() {
+            const container = document.getElementById('reqItensContainer');
+            const newRow = document.createElement('div');
+            newRow.className = 'req-item-row';
+            newRow.style.cssText = 'display:grid; grid-template-columns: 2fr 1fr auto; gap:10px; margin-bottom:10px; align-items:end;';
+            newRow.innerHTML = `
+                <div>
+                    <label>Item:<br>
+                        <select class="req-item-select" style="width:100%; padding:4px;"></select>
+                    </label>
+                </div>
+                <div>
+                    <label>Quantidade:<br>
+                        <input type="number" class="req-item-quantidade" min="1" value="1" style="width:100%; padding:4px;" required>
+                    </label>
+                </div>
+                <div>
+                    <button type="button" class="btn-secondary" onclick="removeReqItem(this)" style="padding:4px 8px;">Remover</button>
+                </div>
+            `;
+            container.appendChild(newRow);
+            populateReqItemSelects();
+        }
+
+        /**
+         * Remove uma linha de item da requisição
+         */
+        function removeReqItem(button) {
+            const rows = document.querySelectorAll('.req-item-row');
+            if (rows.length > 1) {
+                button.closest('.req-item-row').remove();
+            } else {
+                alert('É necessário ter pelo menos um item na requisição');
+            }
+        }
+
+        /**
+         * Envia a requisição de itens para o servidor. Utiliza o usuário selecionado
+         * e os itens informados. Se houver sucesso, fecha o modal e recarrega a lista.
+         */
+        async function submitNovaRequisicaoFamilia() {
+            // Validar solicitante
+            const solicitanteSelect = document.getElementById('reqSolicitanteSelect');
+            const solicitanteId = solicitanteSelect.value;
+            
+            if (!solicitanteId) {
+                alert('Selecione o solicitante');
+                return;
+            }
+            
+            // Coletar itens selecionados
+            const itemRows = document.querySelectorAll('.req-item-row');
+            const itens = [];
+            
+            for (let row of itemRows) {
+                const itemSelect = row.querySelector('.req-item-select');
+                const quantidadeInput = row.querySelector('.req-item-quantidade');
+                
+                const itemId = itemSelect.value;
+                const quantidade = parseInt(quantidadeInput.value);
+                
+                if (!itemId) {
+                    alert('Selecione todos os itens');
+                    return;
+                }
+                
+                if (isNaN(quantidade) || quantidade <= 0) {
+                    alert('Informe quantidades válidas para todos os itens');
+                    return;
+                }
+                
+                itens.push({
+                    item_id: parseInt(itemId),
+                    quantidade: quantidade
+                });
+            }
+            
+            if (itens.length === 0) {
+                alert('Adicione pelo menos um item à requisição');
+                return;
+            }
+            
+            // Obter dados do usuário selecionado
+            const selectedOption = solicitanteSelect.options[solicitanteSelect.selectedIndex];
+            const solicitanteNome = selectedOption.getAttribute('data-nome');
+            const solicitanteRG = selectedOption.getAttribute('data-rg');
+            const solicitanteTelefone = selectedOption.getAttribute('data-telefone');
+            
+            try {
+                // Enviar cada item como uma requisição separada (mantendo compatibilidade com API existente)
+                for (let item of itens) {
+                    const response = await fetch(`${API_BASE}/requisicoes-familia`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+                        },
+                        body: JSON.stringify({
+                            item_id: item.item_id,
+                            quantidade: item.quantidade,
+                            solicitante_nome: solicitanteNome,
+                            solicitante_rg: solicitanteRG,
+                            solicitante_telefone: solicitanteTelefone
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || 'Erro ao criar requisição');
+                }
+                
+                alert(`Requisição criada com sucesso! ${itens.length} item(ns) solicitado(s).`);
                 closeModal('novaReqFamiliaModal');
                 loadInventarioFamilia();
             } catch (error) {
@@ -4828,6 +5054,7 @@ let editingEncomendaId = null;
             document.getElementById('estoqueItemNome').value = `${categoria} - ${itemNome}`;
             document.getElementById('estoqueQuantidadeAtual').value = item.quantidade;
             document.getElementById('estoqueQuantidadeAdicionar').value = 1;
+            document.getElementById('estoqueMotivo').value = '';
             
             // Armazena o ID do item para usar na submissão
             document.getElementById('adicionarEstoqueModal').setAttribute('data-item-id', itemId);
@@ -4843,9 +5070,15 @@ let editingEncomendaId = null;
             const modal = document.getElementById('adicionarEstoqueModal');
             const itemId = parseInt(modal.getAttribute('data-item-id'));
             const quantidadeAdicionar = parseInt(document.getElementById('estoqueQuantidadeAdicionar').value);
+            const motivo = document.getElementById('estoqueMotivo').value.trim();
             
             if (isNaN(quantidadeAdicionar) || quantidadeAdicionar <= 0) {
                 alert('Informe uma quantidade válida para adicionar');
+                return;
+            }
+            
+            if (!motivo) {
+                alert('O motivo da alteração é obrigatório');
                 return;
             }
             
@@ -4867,7 +5100,8 @@ let editingEncomendaId = null;
                         categoria: item.categoria, 
                         item: item.item, 
                         quantidade: quantidadeAdicionar,
-                        preco: item.preco
+                        preco: item.preco,
+                        motivo: motivo
                     })
                 });
                 const data = await response.json();
