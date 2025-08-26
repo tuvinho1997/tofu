@@ -760,22 +760,56 @@
                     <div id="inventarioFamiliaGrid" style="margin-bottom: 20px;">
                         <!-- Grid de categorias e itens será renderizado aqui -->
                     </div>
-                    <hr style="margin: 20px 0; border-color: #34495e;">
-                    <h4 style="color:#ecf0f1;">Requisições de Itens</h4>
-                    <div id="requisicoesFamiliaActions" style="margin-bottom:10px;"></div>
-                    <table class="styled-table">
-                        <thead>
-                            <tr>
-                                <th>Solicitante</th>
-                                <th>Item</th>
-                                <th>Quantidade</th>
-                                <th>Status</th>
-                                <th>Data</th>
-                                <th>Ações</th>
-                            </tr>
-                        </thead>
-                        <tbody id="requisicoesFamiliaTableBody"></tbody>
-                    </table>
+                    <hr style="margin: 30px 0; border-color: #34495e;">
+                    
+                    <!-- Seção de Requisições Melhorada -->
+                    <div style="background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%); padding: 20px; border-radius: 10px; margin-bottom: 20px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                            <h4 style="color:#ecf0f1; margin: 0; font-size: 1.4em; font-weight: 600;">
+                                <i style="margin-right: 10px;">📋</i>Requisições de Materiais
+                            </h4>
+                            <button class="btn-primary" onclick="openNovaRequisicaoFamilia()" style="padding: 10px 20px; font-weight: 600;">
+                                <i style="margin-right: 8px;">➕</i>Nova Requisição
+                            </button>
+                        </div>
+                        
+                        <div style="background: rgba(255,255,255,0.05); border-radius: 8px; overflow: hidden; border: 1px solid rgba(255,255,255,0.1);">
+                            <table style="width: 100%; border-collapse: collapse; margin: 0;">
+                                <thead>
+                                    <tr style="background: rgba(0,0,0,0.3);">
+                                        <th style="padding: 15px 12px; text-align: left; color: #ecf0f1; font-weight: 600; border-bottom: 2px solid #3498db;">
+                                            👤 Solicitante
+                                        </th>
+                                        <th style="padding: 15px 12px; text-align: left; color: #ecf0f1; font-weight: 600; border-bottom: 2px solid #3498db;">
+                                            📦 Item
+                                        </th>
+                                        <th style="padding: 15px 12px; text-align: center; color: #ecf0f1; font-weight: 600; border-bottom: 2px solid #3498db; width: 100px;">
+                                            🔢 Qtd
+                                        </th>
+                                        <th style="padding: 15px 12px; text-align: center; color: #ecf0f1; font-weight: 600; border-bottom: 2px solid #3498db; width: 120px;">
+                                            📊 Status
+                                        </th>
+                                        <th style="padding: 15px 12px; text-align: center; color: #ecf0f1; font-weight: 600; border-bottom: 2px solid #3498db; width: 130px;">
+                                            📅 Data
+                                        </th>
+                                        <th style="padding: 15px 12px; text-align: center; color: #ecf0f1; font-weight: 600; border-bottom: 2px solid #3498db; width: 150px;">
+                                            ⚙️ Ações
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody id="requisicoesFamiliaTableBody" style="background: rgba(255,255,255,0.02);">
+                                    <!-- Requisições serão renderizadas aqui -->
+                                </tbody>
+                            </table>
+                            
+                            <!-- Mensagem quando não há requisições -->
+                            <div id="noRequisicoes" style="display: none; text-align: center; padding: 40px; color: #bdc3c7;">
+                                <div style="font-size: 3em; margin-bottom: 15px; opacity: 0.5;">📋</div>
+                                <h5 style="color: #ecf0f1; margin-bottom: 10px;">Nenhuma requisição encontrada</h5>
+                                <p style="margin: 0; opacity: 0.7;">Clique em "Nova Requisição" para solicitar materiais do estoque.</p>
+                            </div>
+                        </div>
+                    </div>
                 </div>             </table>
                 </div>
             </div>
@@ -4487,20 +4521,15 @@ let editingEncomendaId = null;
         }
 
         /**
-         * Atualiza os botões de ação no inventário da família com base no
-         * papel do usuário. Membros e gerentes podem solicitar itens, enquanto
-         * líderes e administradores podem cadastrar novos itens.  Além disso,
-         * requisições pendentes terão botões de aprovação/rejeição para
-         * líderes/administradores e botão de entrega/cancelamento para
-         * requisições já aprovadas/entregues.
+         * Atualiza as ações disponíveis no inventário da família baseado no papel
+         * do usuário. Administradores e líderes podem adicionar itens.
          */
         function updateInventarioFamiliaActions() {
             const user = currentUser || JSON.parse(localStorage.getItem('user') || '{}');
             const actionsDiv = document.getElementById('inventarioFamiliaActions');
-            const reqActionsDiv = document.getElementById('requisicoesFamiliaActions');
-            if (!actionsDiv || !reqActionsDiv) return;
+            if (!actionsDiv) return;
             actionsDiv.innerHTML = '';
-            reqActionsDiv.innerHTML = '';
+            
             // Ação para adicionar item (somente líderes/administradores)
             if (user.role === 'admin' || user.role === 'lider') {
                 const addBtn = document.createElement('button');
@@ -4511,14 +4540,6 @@ let editingEncomendaId = null;
                 };
                 actionsDiv.appendChild(addBtn);
             }
-            // Ação para solicitar item (todos os usuários podem criar requisições)
-            const reqBtn = document.createElement('button');
-            reqBtn.className = 'btn-primary';
-            reqBtn.textContent = 'Nova Requisição';
-            reqBtn.onclick = () => {
-                openNovaRequisicaoFamilia();
-            };
-            reqActionsDiv.appendChild(reqBtn);
         }
 
         /**
@@ -4603,36 +4624,94 @@ let editingEncomendaId = null;
         }
 
         /**
-         * Renderiza a tabela de requisições da família.  Exibe ações
-         * contextuais dependendo do status da requisição e do papel do usuário.
+         * Renderiza a tabela de requisições da família com layout profissional.
+         * Exibe ações contextuais dependendo do status da requisição e do papel do usuário.
          */
         function renderRequisicoesFamiliaTable() {
             const body = document.getElementById('requisicoesFamiliaTableBody');
+            const noRequisicoes = document.getElementById('noRequisicoes');
             if (!body) return;
+            
             body.innerHTML = '';
             const user = currentUser || JSON.parse(localStorage.getItem('user') || '{}');
-            requisicoesFamilia.forEach(req => {
+            
+            // Se não há requisições, mostra mensagem
+            if (!requisicoesFamilia || requisicoesFamilia.length === 0) {
+                if (noRequisicoes) noRequisicoes.style.display = 'block';
+                return;
+            }
+            
+            if (noRequisicoes) noRequisicoes.style.display = 'none';
+            
+            requisicoesFamilia.forEach((req, index) => {
                 const tr = document.createElement('tr');
+                tr.style.borderBottom = '1px solid rgba(255,255,255,0.1)';
+                tr.style.transition = 'background-color 0.2s ease';
+                
+                // Hover effect
+                tr.onmouseenter = () => tr.style.backgroundColor = 'rgba(255,255,255,0.05)';
+                tr.onmouseleave = () => tr.style.backgroundColor = index % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.04)';
+                tr.style.backgroundColor = index % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.04)';
+                
+                // Status com cores
+                let statusBadge = '';
+                switch(req.status) {
+                    case 'pendente':
+                        statusBadge = `<span style="background: #f39c12; color: white; padding: 4px 8px; border-radius: 12px; font-size: 0.85em; font-weight: 600;">⏳ Pendente</span>`;
+                        break;
+                    case 'aprovado':
+                        statusBadge = `<span style="background: #27ae60; color: white; padding: 4px 8px; border-radius: 12px; font-size: 0.85em; font-weight: 600;">✅ Aprovado</span>`;
+                        break;
+                    case 'entregue':
+                        statusBadge = `<span style="background: #3498db; color: white; padding: 4px 8px; border-radius: 12px; font-size: 0.85em; font-weight: 600;">📦 Entregue</span>`;
+                        break;
+                    case 'rejeitado':
+                        statusBadge = `<span style="background: #e74c3c; color: white; padding: 4px 8px; border-radius: 12px; font-size: 0.85em; font-weight: 600;">❌ Rejeitado</span>`;
+                        break;
+                    default:
+                        statusBadge = `<span style="background: #95a5a6; color: white; padding: 4px 8px; border-radius: 12px; font-size: 0.85em; font-weight: 600;">${req.status}</span>`;
+                }
+                
                 // Monta coluna de ações
                 let actionsHTML = '';
                 if (user.role === 'admin' || user.role === 'lider') {
                     if (req.status === 'pendente') {
-                        actionsHTML += `<button class="btn-primary" onclick="aprovarRequisicao(${req.id})">Aprovar</button>`;
-                        actionsHTML += `<button class="btn-secondary" onclick="rejeitarRequisicao(${req.id})">Rejeitar</button>`;
+                        actionsHTML += `<button class="btn-primary" onclick="aprovarRequisicao(${req.id})" style="margin: 2px; padding: 6px 12px; font-size: 0.85em;">✅ Aprovar</button>`;
+                        actionsHTML += `<button class="btn-secondary" onclick="rejeitarRequisicao(${req.id})" style="margin: 2px; padding: 6px 12px; font-size: 0.85em;">❌ Rejeitar</button>`;
                     } else if (req.status === 'aprovado') {
-                        actionsHTML += `<button class="btn-primary" onclick="entregarRequisicao(${req.id})">Entregar</button>`;
+                        actionsHTML += `<button class="btn-primary" onclick="entregarRequisicao(${req.id})" style="margin: 2px; padding: 6px 12px; font-size: 0.85em;">📦 Entregar</button>`;
                     } else if (req.status === 'entregue') {
-                        actionsHTML += `<button class="btn-secondary" onclick="cancelarRequisicao(${req.id})">Cancelar</button>`;
+                        actionsHTML += `<button class="btn-secondary" onclick="cancelarRequisicao(${req.id})" style="margin: 2px; padding: 6px 12px; font-size: 0.85em;">🔄 Cancelar</button>`;
                     }
                 }
+                
+                if (!actionsHTML) {
+                    actionsHTML = '<span style="color: #95a5a6; font-style: italic;">Sem ações</span>';
+                }
+                
+                // Formatar data
+                const dataFormatada = req.data_criacao ? new Date(req.data_criacao).toLocaleDateString('pt-BR') : '-';
+                
                 tr.innerHTML = `
-                    <td>${req.solicitante_nome}</td>
-                    <td>${req.solicitante_cargo || ''}</td>
-                    <td>${req.categoria} - ${req.item}</td>
-                    <td>${req.quantidade}</td>
-                    <td>${req.status}</td>
-                    <td>${req.lider_username || '-'}</td>
-                    <td>${actionsHTML}</td>
+                    <td style="padding: 12px; color: #ecf0f1;">
+                        <div style="font-weight: 600;">${req.solicitante_nome || 'N/A'}</div>
+                        <div style="font-size: 0.85em; color: #bdc3c7;">${req.solicitante_cargo || 'Membro'}</div>
+                    </td>
+                    <td style="padding: 12px; color: #ecf0f1;">
+                        <div style="font-weight: 500;">${req.categoria || ''} - ${req.item || ''}</div>
+                    </td>
+                    <td style="padding: 12px; text-align: center; color: #ecf0f1; font-weight: 600; font-size: 1.1em;">
+                        ${req.quantidade || 0}
+                    </td>
+                    <td style="padding: 12px; text-align: center;">
+                        ${statusBadge}
+                    </td>
+                    <td style="padding: 12px; text-align: center; color: #bdc3c7; font-size: 0.9em;">
+                        ${dataFormatada}
+                    </td>
+                    <td style="padding: 12px; text-align: center;">
+                        ${actionsHTML}
+                    </td>
                 `;
                 body.appendChild(tr);
             });
