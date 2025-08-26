@@ -1931,17 +1931,35 @@ app.post('/api/requisicoes-familia', authenticateToken, (req, res) => {
             if (memberErr) {
                 return res.status(500).json({ error: memberErr.message });
             }
+            // Inicializa os dados do solicitante com os valores enviados no corpo
+            // da requisição. Esses campos podem ser enviados quando o usuário
+            // não possui um cadastro na tabela membros (por exemplo, se for um
+            // gerente sem vínculo a um membro). Mais abaixo, caso seja
+            // encontrado um membro associado ao usuário logado, esses valores
+            // serão sobrescritos pelos dados do membro.
             let nomeSolicitante = solicitante_nome;
             let cargoSolicitante = solicitante_cargo;
             let rgSolicitante = solicitante_rg;
             let telefoneSolicitante = solicitante_telefone;
             let membroId = null;
             if (member) {
+                // Se o usuário possuir cadastro de membro, utiliza essas
+                // informações como dados do solicitante.
                 nomeSolicitante = member.nome;
                 cargoSolicitante = member.cargo;
                 rgSolicitante = member.rg;
                 telefoneSolicitante = member.telefone;
                 membroId = member.id;
+            } else {
+                // Caso contrário, garante que nome e cargo estejam pelo menos
+                // definidos. Se o front-end não enviar esses campos, usa o
+                // username e o papel do usuário logado como fallback. Os
+                // campos de RG e telefone permanecem vazios se não
+                // fornecidos.
+                if (!nomeSolicitante) nomeSolicitante = req.user.username;
+                if (!cargoSolicitante) cargoSolicitante = req.user.role;
+                if (!rgSolicitante) rgSolicitante = '';
+                if (!telefoneSolicitante) telefoneSolicitante = '';
             }
             db.run(`INSERT INTO requisicoes_familia (item_id, membro_id, solicitante_nome, solicitante_cargo, solicitante_rg, solicitante_telefone, quantidade, status)
                     VALUES (?, ?, ?, ?, ?, ?, ?, 'pendente')`,
