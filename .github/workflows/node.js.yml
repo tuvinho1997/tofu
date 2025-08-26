@@ -21,7 +21,7 @@ jobs:
           password: ${{ secrets.SSH_PASSWORD }} # <<<<<< NOVO: Usa a senha do segredo do GitHub
           script: | # Comandos a serem executados no servidor
             echo "Conectado ao servidor. Atualizando projeto..."
-            cd /tofu # Navega para o diretório do seu projeto
+            cd /var/www/html/tofu # Navega para o diretório do seu projeto
             git pull # Puxa as últimas alterações do Git
             pm2 restart tofu # Reinicia o processo PM2 do seu projeto
             echo "Deploy concluído!"
