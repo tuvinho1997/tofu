@@ -130,6 +130,26 @@ function initDatabase() {
                 }
             });
 
+            // Remove rotas duplicadas mantendo apenas o primeiro registro para cada
+            // combinação (membro_id, data_entrega). Sem esta remoção, a criação
+            // do índice único abaixo poderia falhar se houver duplicidades já
+            // cadastradas.
+            db.run(`DELETE FROM rotas
+                    WHERE rowid NOT IN (SELECT MIN(rowid) FROM rotas GROUP BY membro_id, data_entrega)`, (err) => {
+                if (err) {
+                    console.error('Erro ao remover duplicatas de rotas:', err.message);
+                }
+                // Cria um índice único para impedir a criação de mais de uma rota
+                // para o mesmo membro e data de entrega.  Isso garante que
+                // generateRotasParaProximaSemana() não insira rotas duplicadas
+                // quando o servidor reinicia.
+                db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_rotas_membro_data ON rotas(membro_id, data_entrega)', (idxErr) => {
+                    if (idxErr) {
+                        console.error('Erro ao criar índice único em rotas:', idxErr.message);
+                    }
+                });
+            });
+
             // Tabela de encomendas
             db.run(`CREATE TABLE IF NOT EXISTS encomendas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -219,6 +239,42 @@ function initDatabase() {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 nome TEXT NOT NULL UNIQUE,
                 data_criacao DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`);
+
+            // -------------------------------------------------------------------
+            // Tabelas de Inventário da Família e Requisições de Itens
+            // -------------------------------------------------------------------
+            // Inventário da família: itens agrupados por categoria e subcategoria.
+            db.run(`CREATE TABLE IF NOT EXISTS inventario_familia (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                categoria TEXT NOT NULL,
+                subcategoria TEXT NOT NULL,
+                quantidade INTEGER DEFAULT 0,
+                preco REAL DEFAULT 0,
+                data_atualizacao DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`);
+            // Índice único para evitar duplicidade (categoria, subcategoria)
+            db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_inventario_cat_sub ON inventario_familia(categoria, subcategoria)');
+
+            // Requisições de itens da família: registra pedidos de membros/gerentes
+            // e o processamento por líderes ou administradores.
+            db.run(`CREATE TABLE IF NOT EXISTS requisicoes_familia (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_id INTEGER NOT NULL,
+                membro_id INTEGER,
+                solicitante_nome TEXT,
+                solicitante_cargo TEXT,
+                solicitante_rg TEXT,
+                solicitante_telefone TEXT,
+                quantidade INTEGER NOT NULL,
+                status TEXT DEFAULT 'pendente',
+                lider_id INTEGER,
+                data_solicitacao DATETIME DEFAULT CURRENT_TIMESTAMP,
+                data_resposta DATETIME,
+                data_entrega DATETIME,
+                FOREIGN KEY (item_id) REFERENCES inventario_familia(id),
+                FOREIGN KEY (membro_id) REFERENCES membros(id),
+                FOREIGN KEY (lider_id) REFERENCES usuarios(id)
             )`);
 
             // Tabela de configuração geral. Armazena chaves de configuração como a taxa de comissão.
@@ -400,45 +456,6 @@ app.post('/api/auth/login', (req, res) => {
             { expiresIn: '24h' }
         );
 
-            // Tabela de inventário da família. Armazena itens especiais (produtos
-            // comprados, produtos para roubo, produtos de ação fechada e
-            // produtos de ação) separados por categoria e subcategoria.  Cada
-            // item possui uma quantidade e um preço unitário.  A chave
-            // (categoria, subcategoria) é única para evitar duplicatas.
-            db.run(`CREATE TABLE IF NOT EXISTS inventario_familia (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                categoria TEXT NOT NULL,
-                subcategoria TEXT NOT NULL,
-                quantidade INTEGER DEFAULT 0,
-                preco REAL DEFAULT 0,
-                data_atualizacao DATETIME DEFAULT CURRENT_TIMESTAMP
-            )`);
-            db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_inventario_cat_sub ON inventario_familia(categoria, subcategoria)');
-
-            // Tabela de requisições de itens do inventário da família.  Cada
-            // requisição é criada por um membro ou gerente e pode ser
-            // aprovada/rejeitada por um líder.  Quando aprovada e
-            // posteriormente marcada como entregue, a quantidade é baixada do
-            // inventário.  Caso seja cancelada após entrega, a quantidade é
-            // devolvida ao inventário.
-            db.run(`CREATE TABLE IF NOT EXISTS requisicoes_familia (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                item_id INTEGER NOT NULL,
-                membro_id INTEGER,
-                solicitante_nome TEXT,
-                solicitante_cargo TEXT,
-                solicitante_rg TEXT,
-                solicitante_telefone TEXT,
-                quantidade INTEGER NOT NULL,
-                status TEXT DEFAULT 'pendente',
-                lider_id INTEGER,
-                data_solicitacao DATETIME DEFAULT CURRENT_TIMESTAMP,
-                data_resposta DATETIME,
-                data_entrega DATETIME,
-                FOREIGN KEY (item_id) REFERENCES inventario_familia(id),
-                FOREIGN KEY (membro_id) REFERENCES membros(id),
-                FOREIGN KEY (lider_id) REFERENCES usuarios(id)
-            )`);
         res.json({
             message: 'Login realizado com sucesso',
             token: token,
