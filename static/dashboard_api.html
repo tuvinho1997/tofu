@@ -1448,7 +1448,7 @@
                 
                 <div style="background: rgba(52, 73, 94, 0.8); padding: 20px; border-radius: 10px; margin: 25px 0; border: 1px solid rgba(142, 68, 173, 0.3);">
                     <div style="color: #ecf0f1; font-weight: 600; font-size: 16px;">Valor Total: <span id="valorTotal">R$ 100.000,00</span></div>
-                    <div style="color: #2ecc71; font-weight: 600; font-size: 16px; margin-top: 5px;">Comissão (7%): <span id="comissaoTotal">R$ 7.000,00</span></div>
+                    <div style="color: #2ecc71; font-weight: 600; font-size: 16px; margin-top: 5px;"><span id="comissaoLabel">Comissão (7%)</span>: <span id="comissaoTotal">R$ 7.000,00</span></div>
                 </div>
                 
                 <div class="form-group">
@@ -2725,21 +2725,9 @@ let editingEncomendaId = null;
             console.log('=== CARREGANDO ENCOMENDAS ===');
             
             try {
-                const response = await fetch(`${API_BASE}/encomendas`);
-                console.log('Response status:', response.status);
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                
-                const data = await response.json();
-                console.log('Encomendas carregadas:', data);
-                
-                encomendas = data;
-                // Mantém uma referência global a todas as encomendas para cálculos de reservas
-                window.allEncomendas = data;
-                
-                // VERIFICAÇÃO AUTOMÁTICA: Força verificação de encomendas prontas
+                // Antes de carregar as encomendas, executa a verificação de prontos no servidor.
+                // A verificação atualiza o status de encomendas pendentes para "pronto" se houver estoque
+                // suficiente. Após a verificação, carregamos a lista de encomendas atualizada.
                 try {
                     await fetch(`${API_BASE}/verificar-prontos`, {
                         method: 'POST',
@@ -2749,14 +2737,22 @@ let editingEncomendaId = null;
                 } catch (e) {
                     console.warn('Erro na verificação automática:', e);
                 }
-                
+
+                const response = await fetch(`${API_BASE}/encomendas`);
+                console.log('Response status:', response.status);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                console.log('Encomendas carregadas:', data);
+                encomendas = data;
+                // Mantém uma referência global a todas as encomendas para cálculos de reservas
+                window.allEncomendas = data;
                 // Aplica filtro selecionado antes de renderizar
                 applyEncomendaFilter();
                 // Atualiza indicadores do dashboard após carregar encomendas
                 updateDashboardStats();
-                
                 console.log('=== ENCOMENDAS CARREGADAS COM SUCESSO ===');
-                
             } catch (error) {
                 console.error('Erro ao carregar encomendas:', error);
                 const tbody = document.getElementById('encomendasTableBody');
@@ -2800,6 +2796,10 @@ let editingEncomendaId = null;
                     // Armazena globalmente e atualiza o input em porcentagem
                     window.currentCommissionRate = rate;
                     input.value = (rate * 100).toFixed(2);
+                    // Atualiza exibição de comissão no formulário de encomendas
+                    if (typeof updateCommissionDisplay === 'function') {
+                        updateCommissionDisplay();
+                    }
                 }
             } catch (error) {
                 console.error('Erro ao carregar taxa de comissão:', error);
@@ -2835,6 +2835,11 @@ let editingEncomendaId = null;
                     alert(data.message || 'Taxa de comissão atualizada com sucesso');
                     // Atualiza valor global e recarrega encomendas para refletir mudanças
                     window.currentCommissionRate = rate;
+                    // Atualiza exibição de comissão no formulário
+                    if (typeof updateCommissionDisplay === 'function') {
+                        updateCommissionDisplay();
+                    }
+                    // Recarrega encomendas para refletir a nova taxa de comissão nas comissões futuras
                     loadEncomendas();
                 } else {
                     alert(data.error || 'Erro ao atualizar taxa de comissão');
@@ -3181,12 +3186,40 @@ let editingEncomendaId = null;
             const preco12cbc = parseFloat(document.getElementById('preco12cbc').value) || 0;
 
             const total = (qtd5mm * preco5mm) + (qtd9mm * preco9mm) + (qtd762mm * preco762mm) + (qtd12cbc * preco12cbc);
-            const comissao = total * 0.07;
-
+            // Usa a taxa de comissão configurada no sistema. Se não estiver carregada,
+            // assume-se o padrão de 7% (0.07). A taxa é armazenada em window.currentCommissionRate
+            // pela função loadCommissionRate().
+            const rate = (typeof window.currentCommissionRate === 'number' && !isNaN(window.currentCommissionRate)) ? window.currentCommissionRate : 0.07;
+            const comissao = total * rate;
             document.getElementById('valorTotal').textContent = `R$ ${total.toFixed(2)}`;
             document.getElementById('comissaoTotal').textContent = `R$ ${comissao.toFixed(2)}`;
-        }
+            // Atualiza o rótulo da comissão para refletir a taxa atual
+            const label = document.getElementById('comissaoLabel');
+            if (label) {
+                label.textContent = `Comissão (${(rate * 100).toFixed(2)}%)`;
+            }
+        } // fim da função calcularTotal
 
+        /**
+         * Atualiza o rótulo de comissão e recalcula os valores exibidos
+         * no formulário de cadastro de encomendas. Esta função deve ser
+         * chamada sempre que a taxa de comissão global (window.currentCommissionRate)
+         * for alterada. Ela ajusta o texto "Comissão (X%)" e dispara o
+         * recálculo do valor de comissão.
+         */
+        function updateCommissionDisplay() {
+            // Ajusta o rótulo da comissão para refletir a taxa atual
+            const rate = (typeof window.currentCommissionRate === 'number' && !isNaN(window.currentCommissionRate)) ? window.currentCommissionRate : 0.07;
+            const label = document.getElementById('comissaoLabel');
+            if (label) {
+                label.textContent = `Comissão (${(rate * 100).toFixed(2)}%)`;
+            }
+            // Recalcula os totais para atualizar o valor de comissão exibido
+            if (typeof calcularTotal === 'function') {
+                calcularTotal();
+            }
+        }
+        
         // Carregar Estoque
         async function loadEstoque() {
             try {
@@ -3301,10 +3334,13 @@ let editingEncomendaId = null;
             } else if (tipo === 'municao' && estoque.municoes) {
                 items = estoque.municoes;
             }
-            items.forEach(item => {
+            // Remove duplicatas consolidando por nome/tipo e ignorando espaços
+            const uniqueItems = [...new Map(items.map(item => [((item.nome || item.tipo) || '').trim(), item])).values()];
+            uniqueItems.forEach(item => {
+                const key = (item.nome || item.tipo) ? (item.nome || item.tipo).trim() : '';
                 const option = document.createElement('option');
-                option.value = item.nome;
-                option.textContent = item.nome;
+                option.value = key;
+                option.textContent = key;
                 select.appendChild(option);
             });
         }
@@ -3324,10 +3360,13 @@ let editingEncomendaId = null;
             } else if (tipo === 'municao' && estoque.municoes) {
                 items = estoque.municoes;
             }
-            items.forEach(item => {
+            // Remove duplicatas por nome/tipo
+            const uniqueItems = [...new Map(items.map(item => [((item.nome || item.tipo) || '').trim(), item])).values()];
+            uniqueItems.forEach(item => {
+                const key = (item.nome || item.tipo) ? (item.nome || item.tipo).trim() : '';
                 const option = document.createElement('option');
-                option.value = item.nome;
-                option.textContent = item.nome;
+                option.value = key;
+                option.textContent = key;
                 select.appendChild(option);
             });
         }
@@ -3437,11 +3476,12 @@ let editingEncomendaId = null;
                     baixarGroup.style.display = 'none';
                 }
                 // Remove duplicatas usando Set
-                const uniqueMaterials = [...new Map(estoque.materiais.map(m => [m.nome, m])).values()];
+                const uniqueMaterials = [...new Map(estoque.materiais.map(m => [ (m.nome || '').trim(), m ])).values()];
                 uniqueMaterials.forEach(material => {
+                    const key = (material.nome || '').trim();
                     const option = document.createElement('option');
-                    option.value = material.nome;
-                    option.textContent = material.nome;
+                    option.value = key;
+                    option.textContent = key;
                     itemSelect.appendChild(option);
                 });
             } else if (tipo === 'municao') {
@@ -3450,12 +3490,13 @@ let editingEncomendaId = null;
                     baixarGroup.style.display = 'block';
                 }
                 // Remove duplicatas usando Set
-                const uniqueMunicoes = [...new Map(estoque.municoes.map(m => [m.nome || m.tipo, m])).values()];
+                const uniqueMunicoes = [...new Map(estoque.municoes.map(m => [ ((m.nome || m.tipo) || '').trim(), m ])).values()];
                 uniqueMunicoes.forEach(municao => {
+                    const key = ((municao.nome || municao.tipo) || '').trim();
                     const option = document.createElement('option');
                     // Para munições, utilizamos o campo nome (ex.: 5mm, 9mm, 762mm, 12cbc)
-                    option.value = municao.nome || municao.tipo;
-                    option.textContent = formatMunicaoName(municao.nome || municao.tipo);
+                    option.value = key;
+                    option.textContent = formatMunicaoName(key);
                     itemSelect.appendChild(option);
                 });
             } else {
@@ -3983,22 +4024,24 @@ let editingEncomendaId = null;
             const itemSelect = document.getElementById('retiradaItem');
             itemSelect.innerHTML = '<option value="">Selecione...</option>';
             if (!estoque || !estoque.materiais || !estoque.municoes) return;
-            if (tipo === 'material') {
-                // Remove duplicatas usando Set
-                const uniqueMaterials = [...new Map(estoque.materiais.map(m => [m.nome, m])).values()];
+            if (tipo === 'material' && Array.isArray(estoque.materiais)) {
+                // Remove duplicatas consolidando por nome
+                const uniqueMaterials = [...new Map(estoque.materiais.map(m => [ (m.nome || '').trim(), m ])).values()];
                 uniqueMaterials.forEach(mat => {
+                    const key = (mat.nome || '').trim();
                     const option = document.createElement('option');
-                    option.value = mat.nome;
-                    option.textContent = mat.nome;
+                    option.value = key;
+                    option.textContent = key;
                     itemSelect.appendChild(option);
                 });
-            } else if (tipo === 'municao') {
-                // Remove duplicatas usando Set
-                const uniqueMunicoes = [...new Map(estoque.municoes.map(m => [m.nome || m.tipo, m])).values()];
+            } else if (tipo === 'municao' && Array.isArray(estoque.municoes)) {
+                // Remove duplicatas consolidando por nome ou tipo
+                const uniqueMunicoes = [...new Map(estoque.municoes.map(m => [ ((m.nome || m.tipo) || '').trim(), m ])).values()];
                 uniqueMunicoes.forEach(municao => {
+                    const key = ((municao.nome || municao.tipo) || '').trim();
                     const option = document.createElement('option');
-                    option.value = municao.nome || municao.tipo;
-                    option.textContent = formatMunicaoName(municao.nome || municao.tipo);
+                    option.value = key;
+                    option.textContent = formatMunicaoName(key);
                     itemSelect.appendChild(option);
                 });
             }
@@ -4009,23 +4052,25 @@ let editingEncomendaId = null;
             const tipo = document.getElementById('saidaAvulsaTipo').value;
             const itemSelect = document.getElementById('saidaAvulsaItem');
             itemSelect.innerHTML = '<option value="">Selecione...</option>';
-            if (!estoque || !estoque.materiais || !estoque.municoes) return;
+            if (!estoque || !Array.isArray(estoque.materiais) || !Array.isArray(estoque.municoes)) return;
             if (tipo === 'material') {
-                // Remove duplicatas usando Set
-                const uniqueMaterials = [...new Map(estoque.materiais.map(m => [m.nome, m])).values()];
+                // Remove duplicatas consolidando por nome
+                const uniqueMaterials = [...new Map(estoque.materiais.map(m => [ (m.nome || '').trim(), m ])).values()];
                 uniqueMaterials.forEach(mat => {
+                    const key = (mat.nome || '').trim();
                     const option = document.createElement('option');
-                    option.value = mat.nome;
-                    option.textContent = mat.nome;
+                    option.value = key;
+                    option.textContent = key;
                     itemSelect.appendChild(option);
                 });
             } else if (tipo === 'municao') {
-                // Remove duplicatas usando Set
-                const uniqueMunicoes = [...new Map(estoque.municoes.map(m => [m.nome || m.tipo, m])).values()];
+                // Remove duplicatas consolidando por nome ou tipo
+                const uniqueMunicoes = [...new Map(estoque.municoes.map(m => [ ((m.nome || m.tipo) || '').trim(), m ])).values()];
                 uniqueMunicoes.forEach(municao => {
+                    const key = ((municao.nome || municao.tipo) || '').trim();
                     const option = document.createElement('option');
-                    option.value = municao.nome || municao.tipo;
-                    option.textContent = formatMunicaoName(municao.nome || municao.tipo);
+                    option.value = key;
+                    option.textContent = formatMunicaoName(key);
                     itemSelect.appendChild(option);
                 });
             }
@@ -4221,7 +4266,10 @@ let editingEncomendaId = null;
             const qtd12cbc = parseInt(document.getElementById('municao12cbc').value) || 0;
             const preco12cbc = parseFloat(document.getElementById('preco12cbc').value) || 0;
             const totalCalc = (qtd5mm * preco5mm) + (qtd9mm * preco9mm) + (qtd762mm * preco762mm) + (qtd12cbc * preco12cbc);
-            const comissaoCalc = totalCalc * 0.07;
+            // Calcula a comissão usando a taxa configurada globalmente. Se a taxa
+            // ainda não estiver definida ou não for numérica, utiliza 7% como padrão.
+            const rate = (typeof window.currentCommissionRate === 'number' && !isNaN(window.currentCommissionRate)) ? window.currentCommissionRate : 0.07;
+            const comissaoCalc = totalCalc * rate;
             formData.valor_total = parseFloat(totalCalc.toFixed(2));
             formData.comissao = parseFloat(comissaoCalc.toFixed(2));
             

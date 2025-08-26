@@ -520,103 +520,102 @@ function devolverEstoquePorEncomenda(q5, q9, q762, q12) {
  * Retorna uma Promise que resolve quando a verificação estiver concluída. Erros são
  * propagados via rejeição ou registrados no console.
  */
+/**
+ * Percorre as encomendas pendentes e marca-as como prontas quando houver
+ * estoque suficiente. As encomendas são processadas por ordem de
+ * criação (primeiro as mais antigas) para garantir que quem pediu
+ * primeiro tenha prioridade. Ao marcar uma encomenda como "pronto",
+ * a quantidade de munições correspondente é baixada do banco de dados,
+ * efetivamente reservando o estoque. Se não houver estoque suficiente
+ * para uma encomenda, a verificação é interrompida.
+ *
+ * Esta função ignora reservas implícitas de encomendas já prontas, pois
+ * essas quantidades já foram removidas do estoque ao marcar a encomenda
+ * como pronta.
+ *
+ * @returns {Promise<void>} Uma promise que resolve quando a verificação
+ *                          terminar.
+ */
 function verificarEncomendasProntas() {
     return new Promise((resolve, reject) => {
         console.log('🔍 Iniciando verificação de encomendas prontas...');
-        // Recupera estoque atual de munições (soma quantidades em caso de duplicatas)
-        db.all('SELECT nome, SUM(quantidade) as quantidade FROM estoque WHERE tipo = "municao" GROUP BY nome', (errStock, estoqueRows) => {
+        // Recupera estoque atual de munições (consolidado)
+        db.all('SELECT nome, SUM(quantidade) as quantidade FROM estoque WHERE tipo = "municao" GROUP BY nome', async (errStock, estoqueRows) => {
             if (errStock) {
                 console.error('Erro ao obter estoque para verificação de encomendas prontas:', errStock);
                 return reject(errStock);
             }
-            console.log('📦 Estoque atual (consolidado):', estoqueRows);
-            // Calcula quantidades de munições já reservadas por encomendas em status "pronto" (mas ainda não entregues).
+            // Mapeia estoque disponível por tipo
             const estoqueDisponivel = {};
             estoqueRows.forEach(row => {
                 estoqueDisponivel[row.nome] = row.quantidade;
             });
-            // Soma reservas atuais (encomendas com status = 'pronto')
-            db.all('SELECT municao_5mm, municao_9mm, municao_762mm, municao_12cbc FROM encomendas WHERE status = "pronto"', (errRes, reservas) => {
-                if (errRes) {
-                    console.error('Erro ao obter reservas de encomendas prontas:', errRes);
-                    return reject(errRes);
-                }
-                console.log('🔒 Reservas atuais (encomendas prontas):', reservas);
-                let reservado5 = 0, reservado9 = 0, reservado762 = 0, reservado12 = 0;
-                reservas.forEach(r => {
-                    reservado5 += r.municao_5mm || 0;
-                    reservado9 += r.municao_9mm || 0;
-                    reservado762 += r.municao_762mm || 0;
-                    reservado12 += r.municao_12cbc || 0;
-                });
-                estoqueDisponivel['5mm'] = (estoqueDisponivel['5mm'] || 0) - reservado5;
-                estoqueDisponivel['9mm'] = (estoqueDisponivel['9mm'] || 0) - reservado9;
-                estoqueDisponivel['762mm'] = (estoqueDisponivel['762mm'] || 0) - reservado762;
-                estoqueDisponivel['12cbc'] = (estoqueDisponivel['12cbc'] || 0) - reservado12;
-                
-                console.log('✅ Estoque disponível após reservas:', estoqueDisponivel);
+            console.log('📦 Estoque consolidado de munições:', estoqueDisponivel);
 
-                // Recupera encomendas pendentes em ordem de criação
-                db.all('SELECT * FROM encomendas WHERE status = "pendente" ORDER BY data_criacao ASC', async (errOrders, pendentes) => {
-                    if (errOrders) {
-                        console.error('Erro ao obter encomendas pendentes:', errOrders);
-                        return reject(errOrders);
-                    }
-                    console.log('⏳ Encomendas pendentes encontradas:', pendentes.length);
-                    if (pendentes.length > 0) {
-                        console.log('📋 Detalhes das encomendas pendentes:', pendentes.map(p => ({
-                            id: p.id,
-                            cliente: p.cliente,
-                            municao_5mm: p.municao_5mm,
-                            municao_9mm: p.municao_9mm,
-                            municao_762mm: p.municao_762mm,
-                            municao_12cbc: p.municao_12cbc
-                        })));
-                    }
-                    try {
-                        for (const pedido of pendentes) {
-                            const req5 = pedido.municao_5mm || 0;
-                            const req9 = pedido.municao_9mm || 0;
-                            const req762 = pedido.municao_762mm || 0;
-                            const req12 = pedido.municao_12cbc || 0;
-                            
-                            console.log(`🔍 Verificando encomenda ${pedido.id} (${pedido.cliente}):`);
-                            console.log(`   Necessário: 5mm=${req5}, 9mm=${req9}, 762=${req762}, 12cbc=${req12}`);
-                            console.log(`   Disponível: 5mm=${estoqueDisponivel['5mm']}, 9mm=${estoqueDisponivel['9mm']}, 762=${estoqueDisponivel['762mm']}, 12cbc=${estoqueDisponivel['12cbc']}`);
-                            
-                            // Verifica disponibilidade considerando reservas
-                            if ((estoqueDisponivel['5mm'] || 0) >= req5 &&
-                                (estoqueDisponivel['9mm'] || 0) >= req9 &&
-                                (estoqueDisponivel['762mm'] || 0) >= req762 &&
-                                (estoqueDisponivel['12cbc'] || 0) >= req12) {
-                                
-                                console.log(`✅ Encomenda ${pedido.id} pode ser marcada como PRONTA!`);
-                                // Marca encomenda como pronta (não remove estoque fisicamente)
-                                await new Promise((resUpd, rejUpd) => {
-                                    db.run('UPDATE encomendas SET status = ? WHERE id = ?', ['pronto', pedido.id], function(errUpd) {
-                                        if (errUpd) return rejUpd(errUpd);
-                                        console.log(`🎉 Encomenda ${pedido.id} atualizada para PRONTO!`);
-                                        resUpd();
+            // Recupera encomendas pendentes ordenadas pela data de criação
+            db.all('SELECT * FROM encomendas WHERE status = "pendente" ORDER BY data_criacao ASC', async (errOrders, pendentes) => {
+                if (errOrders) {
+                    console.error('Erro ao obter encomendas pendentes:', errOrders);
+                    return reject(errOrders);
+                }
+                console.log('⏳ Número de encomendas pendentes:', pendentes.length);
+                try {
+                    for (const pedido of pendentes) {
+                        const req5 = pedido.municao_5mm || 0;
+                        const req9 = pedido.municao_9mm || 0;
+                        const req762 = pedido.municao_762mm || 0;
+                        const req12 = pedido.municao_12cbc || 0;
+
+                        console.log(`🔍 Verificando encomenda ${pedido.id} (${pedido.cliente}):`);
+                        console.log(`   Necessário: 5mm=${req5}, 9mm=${req9}, 762mm=${req762}, 12cbc=${req12}`);
+                        console.log(`   Disponível: 5mm=${estoqueDisponivel['5mm'] || 0}, 9mm=${estoqueDisponivel['9mm'] || 0}, 762mm=${estoqueDisponivel['762mm'] || 0}, 12cbc=${estoqueDisponivel['12cbc'] || 0}`);
+
+                        // Verifica se há estoque suficiente para esta encomenda
+                        if ((estoqueDisponivel['5mm'] || 0) >= req5 &&
+                            (estoqueDisponivel['9mm'] || 0) >= req9 &&
+                            (estoqueDisponivel['762mm'] || 0) >= req762 &&
+                            (estoqueDisponivel['12cbc'] || 0) >= req12) {
+                            // Atualiza status para pronto
+                            await new Promise((resUpd, rejUpd) => {
+                                db.run('UPDATE encomendas SET status = ? WHERE id = ?', ['pronto', pedido.id], function(errUpd) {
+                                    if (errUpd) {
+                                        return rejUpd(errUpd);
+                                    }
+                                    console.log(`🎉 Encomenda ${pedido.id} marcada como pronta.`);
+                                    resUpd();
+                                });
+                            });
+                            // Baixa a quantidade de munições do estoque
+                            try {
+                                await baixarEstoquePorEncomenda(req5, req9, req762, req12);
+                                console.log(`📦 Estoque atualizado para encomenda ${pedido.id}`);
+                            } catch (errBaixa) {
+                                console.error('Erro ao baixar estoque para encomenda pronta:', errBaixa);
+                                // Se não conseguir baixar, desfaz a mudança de status para evitar inconsistencia
+                                await new Promise((resRevert, rejRevert) => {
+                                    db.run('UPDATE encomendas SET status = ? WHERE id = ?', ['pendente', pedido.id], function(errRev) {
+                                        if (errRev) return rejRevert(errRev);
+                                        resRevert();
                                     });
                                 });
-                                // Atualiza estoque disponível em memória
-                                estoqueDisponivel['5mm'] = (estoqueDisponivel['5mm'] || 0) - req5;
-                                estoqueDisponivel['9mm'] = (estoqueDisponivel['9mm'] || 0) - req9;
-                                estoqueDisponivel['762mm'] = (estoqueDisponivel['762mm'] || 0) - req762;
-                                estoqueDisponivel['12cbc'] = (estoqueDisponivel['12cbc'] || 0) - req12;
-                            } else {
-                                console.log(`❌ Encomenda ${pedido.id} não pode ser marcada como pronta - estoque insuficiente`);
-                                // Parar se não houver estoque suficiente para esta encomenda
-                                break;
+                                return reject(errBaixa);
                             }
+                            // Atualiza estoque em memória
+                            estoqueDisponivel['5mm'] = (estoqueDisponivel['5mm'] || 0) - req5;
+                            estoqueDisponivel['9mm'] = (estoqueDisponivel['9mm'] || 0) - req9;
+                            estoqueDisponivel['762mm'] = (estoqueDisponivel['762mm'] || 0) - req762;
+                            estoqueDisponivel['12cbc'] = (estoqueDisponivel['12cbc'] || 0) - req12;
+                        } else {
+                            console.log(`❌ Estoque insuficiente para encomenda ${pedido.id}, parando verificação.`);
+                            break;
                         }
-                        console.log('🏁 Verificação de encomendas prontas concluída!');
-                        resolve();
-                    } catch (errLoop) {
-                        console.error('Erro durante verificação de encomendas prontas:', errLoop);
-                        reject(errLoop);
                     }
-                });
+                    console.log('🏁 Verificação de encomendas prontas concluída.');
+                    resolve();
+                } catch (errLoop) {
+                    console.error('Erro durante verificação de encomendas prontas:', errLoop);
+                    reject(errLoop);
+                }
             });
         });
     });
@@ -750,8 +749,9 @@ app.put('/api/encomendas/:id', (req, res) => {
                 }
 
                 // Controle de estoque baseado em mudanças de status
+                // 1. Se a encomenda estava entregue e deixa de estar entregue,
+                //    devolvemos todo o estoque anteriormente baixado.
                 if (statusAnterior === 'entregue' && status !== 'entregue') {
-                    // Encomenda era entregue e agora não é mais: devolver ao estoque
                     devolverEstoquePorEncomenda(q5Anterior, q9Anterior, q762Anterior, q12Anterior)
                         .then(() => {
                             sendAndVerify({ message: 'Encomenda atualizada e estoque devolvido com sucesso' });
@@ -760,60 +760,173 @@ app.put('/api/encomendas/:id', (req, res) => {
                             console.error('Erro ao devolver estoque:', errDevolver);
                             sendAndVerify({ message: 'Encomenda atualizada, mas erro ao devolver estoque' });
                         });
-                } else if (statusAnterior !== 'entregue' && status === 'entregue') {
-                    // Encomenda não era entregue e agora é: baixar do estoque
-                    baixarEstoquePorEncomenda(q5Novo, q9Novo, q762Novo, q12Novo)
-                        .then(() => {
-                            sendAndVerify({ message: 'Encomenda atualizada e estoque baixado com sucesso' });
-                        })
-                        .catch(errBaixar => {
-                            console.error('Erro ao baixar estoque:', errBaixar);
-                            sendAndVerify({ message: 'Encomenda atualizada, mas erro ao baixar estoque' });
-                        });
-                } else if (statusAnterior === 'entregue' && status === 'entregue') {
-                    // Encomenda continua entregue, mas quantidades podem ter mudado
+                    return;
+                }
+                // 2. Se a encomenda estava pronta (estoque já reservado) e muda para pendente ou cancelada,
+                //    devolvemos as quantidades reservadas. Caso mude para entregue, nada a fazer
+                //    pois o estoque já foi baixado ao marcar como pronto.
+                if (statusAnterior === 'pronto' && status !== 'pronto') {
+                    if (status === 'entregue') {
+                        // A encomenda estava pronta e agora foi entregue: estoque já está reservado.
+                        // Entretanto, se houver alterações de quantidade, ajusta o estoque.
+                        const deltaQ5p = q5Novo - q5Anterior;
+                        const deltaQ9p = q9Novo - q9Anterior;
+                        const deltaQ762p = q762Novo - q762Anterior;
+                        const deltaQ12p = q12Novo - q12Anterior;
+                        if (deltaQ5p !== 0 || deltaQ9p !== 0 || deltaQ762p !== 0 || deltaQ12p !== 0) {
+                            // Ajusta estoque baseado na diferença entre novo e antigo
+                            const baixas = {
+                                q5: Math.max(0, deltaQ5p),
+                                q9: Math.max(0, deltaQ9p),
+                                q762: Math.max(0, deltaQ762p),
+                                q12: Math.max(0, deltaQ12p)
+                            };
+                            const devolucoes = {
+                                q5: Math.abs(Math.min(0, deltaQ5p)),
+                                q9: Math.abs(Math.min(0, deltaQ9p)),
+                                q762: Math.abs(Math.min(0, deltaQ762p)),
+                                q12: Math.abs(Math.min(0, deltaQ12p))
+                            };
+                            baixarEstoquePorEncomenda(baixas.q5, baixas.q9, baixas.q762, baixas.q12)
+                                .then(() => devolverEstoquePorEncomenda(devolucoes.q5, devolucoes.q9, devolucoes.q762, devolucoes.q12))
+                                .then(() => {
+                                    sendAndVerify({ message: 'Encomenda atualizada e estoque ajustado com sucesso' });
+                                })
+                                .catch(errAjuste => {
+                                    console.error('Erro ao ajustar estoque:', errAjuste);
+                                    sendAndVerify({ message: 'Encomenda atualizada, mas erro ao ajustar estoque' });
+                                });
+                        } else {
+                            sendAndVerify({ message: 'Encomenda atualizada com sucesso' });
+                        }
+                    } else {
+                        // Mudou de pronto para outro status (pendente, cancelado): devolve reserva
+                        devolverEstoquePorEncomenda(q5Anterior, q9Anterior, q762Anterior, q12Anterior)
+                            .then(() => {
+                                sendAndVerify({ message: 'Encomenda atualizada e estoque devolvido com sucesso' });
+                            })
+                            .catch(errDevolver => {
+                                console.error('Erro ao devolver estoque:', errDevolver);
+                                sendAndVerify({ message: 'Encomenda atualizada, mas erro ao devolver estoque' });
+                            });
+                    }
+                    return;
+                }
+                // 3. Se a encomenda não era entregue e passa a ser entregue (sem ter estado pronta),
+                //    baixamos o estoque. Isso cobre status pendente ou cancelado -> entregue.
+                if (statusAnterior !== 'entregue' && status === 'entregue') {
+                    if (statusAnterior === 'pronto') {
+                        // Estoque já foi baixado quando marcou como pronto, apenas ajusta se quantidades mudaram.
+                        const deltaQ5p = q5Novo - q5Anterior;
+                        const deltaQ9p = q9Novo - q9Anterior;
+                        const deltaQ762p = q762Novo - q762Anterior;
+                        const deltaQ12p = q12Novo - q12Anterior;
+                        if (deltaQ5p !== 0 || deltaQ9p !== 0 || deltaQ762p !== 0 || deltaQ12p !== 0) {
+                            const baixas = {
+                                q5: Math.max(0, deltaQ5p),
+                                q9: Math.max(0, deltaQ9p),
+                                q762: Math.max(0, deltaQ762p),
+                                q12: Math.max(0, deltaQ12p)
+                            };
+                            const devolucoes = {
+                                q5: Math.abs(Math.min(0, deltaQ5p)),
+                                q9: Math.abs(Math.min(0, deltaQ9p)),
+                                q762: Math.abs(Math.min(0, deltaQ762p)),
+                                q12: Math.abs(Math.min(0, deltaQ12p))
+                            };
+                            baixarEstoquePorEncomenda(baixas.q5, baixas.q9, baixas.q762, baixas.q12)
+                                .then(() => devolverEstoquePorEncomenda(devolucoes.q5, devolucoes.q9, devolucoes.q762, devolucoes.q12))
+                                .then(() => {
+                                    sendAndVerify({ message: 'Encomenda atualizada e estoque ajustado com sucesso' });
+                                })
+                                .catch(errAjuste => {
+                                    console.error('Erro ao ajustar estoque:', errAjuste);
+                                    sendAndVerify({ message: 'Encomenda atualizada, mas erro ao ajustar estoque' });
+                                });
+                        } else {
+                            sendAndVerify({ message: 'Encomenda atualizada com sucesso' });
+                        }
+                    } else {
+                        // Status anterior não era pronto nem entregue: baixar estoque para todas as quantidades
+                        baixarEstoquePorEncomenda(q5Novo, q9Novo, q762Novo, q12Novo)
+                            .then(() => {
+                                sendAndVerify({ message: 'Encomenda atualizada e estoque baixado com sucesso' });
+                            })
+                            .catch(errBaixar => {
+                                console.error('Erro ao baixar estoque:', errBaixar);
+                                sendAndVerify({ message: 'Encomenda atualizada, mas erro ao baixar estoque' });
+                            });
+                    }
+                    return;
+                }
+                // 4. Ajustes de quantidades quando a encomenda continua entregue ou continua pronta
+                if (statusAnterior === 'entregue' && status === 'entregue') {
                     const deltaQ5 = q5Novo - q5Anterior;
                     const deltaQ9 = q9Novo - q9Anterior;
                     const deltaQ762 = q762Novo - q762Anterior;
                     const deltaQ12 = q12Novo - q12Anterior;
-
                     if (deltaQ5 !== 0 || deltaQ9 !== 0 || deltaQ762 !== 0 || deltaQ12 !== 0) {
-                        // Há diferença nas quantidades: ajustar estoque
-                        if (deltaQ5 > 0 || deltaQ9 > 0 || deltaQ762 > 0 || deltaQ12 > 0) {
-                            // Quantidades aumentaram: baixar a diferença do estoque
-                            baixarEstoquePorEncomenda(Math.max(0, deltaQ5), Math.max(0, deltaQ9), Math.max(0, deltaQ762), Math.max(0, deltaQ12))
-                                .then(() => {
-                                    if (deltaQ5 < 0 || deltaQ9 < 0 || deltaQ762 < 0 || deltaQ12 < 0) {
-                                        // Também há quantidades que diminuíram: devolver ao estoque
-                                        return devolverEstoquePorEncomenda(Math.abs(Math.min(0, deltaQ5)), Math.abs(Math.min(0, deltaQ9)), Math.abs(Math.min(0, deltaQ762)), Math.abs(Math.min(0, deltaQ12)));
-                                    }
-                                })
-                                .then(() => {
-                                    sendAndVerify({ message: 'Encomenda atualizada e estoque ajustado com sucesso' });
-                                })
-                                .catch(errAjustar => {
-                                    console.error('Erro ao ajustar estoque:', errAjustar);
-                                    sendAndVerify({ message: 'Encomenda atualizada, mas erro ao ajustar estoque' });
-                                });
-                        } else {
-                            // Apenas quantidades diminuíram: devolver ao estoque
-                            devolverEstoquePorEncomenda(Math.abs(deltaQ5), Math.abs(deltaQ9), Math.abs(deltaQ762), Math.abs(deltaQ12))
-                                .then(() => {
-                                    sendAndVerify({ message: 'Encomenda atualizada e estoque devolvido com sucesso' });
-                                })
-                                .catch(errDevolver => {
-                                    console.error('Erro ao devolver estoque:', errDevolver);
-                                    sendAndVerify({ message: 'Encomenda atualizada, mas erro ao devolver estoque' });
-                                });
-                        }
+                        const baixas = {
+                            q5: Math.max(0, deltaQ5),
+                            q9: Math.max(0, deltaQ9),
+                            q762: Math.max(0, deltaQ762),
+                            q12: Math.max(0, deltaQ12)
+                        };
+                        const devolucoes = {
+                            q5: Math.abs(Math.min(0, deltaQ5)),
+                            q9: Math.abs(Math.min(0, deltaQ9)),
+                            q762: Math.abs(Math.min(0, deltaQ762)),
+                            q12: Math.abs(Math.min(0, deltaQ12))
+                        };
+                        baixarEstoquePorEncomenda(baixas.q5, baixas.q9, baixas.q762, baixas.q12)
+                            .then(() => devolverEstoquePorEncomenda(devolucoes.q5, devolucoes.q9, devolucoes.q762, devolucoes.q12))
+                            .then(() => {
+                                sendAndVerify({ message: 'Encomenda atualizada e estoque ajustado com sucesso' });
+                            })
+                            .catch(errAjuste => {
+                                console.error('Erro ao ajustar estoque:', errAjuste);
+                                sendAndVerify({ message: 'Encomenda atualizada, mas erro ao ajustar estoque' });
+                            });
                     } else {
-                        // Nenhuma mudança nas quantidades
                         sendAndVerify({ message: 'Encomenda atualizada com sucesso' });
                     }
-                } else {
-                    // Nenhuma mudança de status relacionada ao estoque
-                    sendAndVerify({ message: 'Encomenda atualizada com sucesso' });
+                    return;
                 }
+                if (statusAnterior === 'pronto' && status === 'pronto') {
+                    // Ajuste de quantidades quando continua pronto (reserva). Sem alterar status.
+                    const deltaQ5 = q5Novo - q5Anterior;
+                    const deltaQ9 = q9Novo - q9Anterior;
+                    const deltaQ762 = q762Novo - q762Anterior;
+                    const deltaQ12 = q12Novo - q12Anterior;
+                    if (deltaQ5 !== 0 || deltaQ9 !== 0 || deltaQ762 !== 0 || deltaQ12 !== 0) {
+                        const baixas = {
+                            q5: Math.max(0, deltaQ5),
+                            q9: Math.max(0, deltaQ9),
+                            q762: Math.max(0, deltaQ762),
+                            q12: Math.max(0, deltaQ12)
+                        };
+                        const devolucoes = {
+                            q5: Math.abs(Math.min(0, deltaQ5)),
+                            q9: Math.abs(Math.min(0, deltaQ9)),
+                            q762: Math.abs(Math.min(0, deltaQ762)),
+                            q12: Math.abs(Math.min(0, deltaQ12))
+                        };
+                        baixarEstoquePorEncomenda(baixas.q5, baixas.q9, baixas.q762, baixas.q12)
+                            .then(() => devolverEstoquePorEncomenda(devolucoes.q5, devolucoes.q9, devolucoes.q762, devolucoes.q12))
+                            .then(() => {
+                                sendAndVerify({ message: 'Encomenda atualizada e estoque ajustado com sucesso' });
+                            })
+                            .catch(errAjuste => {
+                                console.error('Erro ao ajustar estoque:', errAjuste);
+                                sendAndVerify({ message: 'Encomenda atualizada, mas erro ao ajustar estoque' });
+                            });
+                    } else {
+                        sendAndVerify({ message: 'Encomenda atualizada com sucesso' });
+                    }
+                    return;
+                }
+                // 5. Demais casos: nenhuma alteração de estoque é necessária
+                sendAndVerify({ message: 'Encomenda atualizada com sucesso' });
             }
         );
     });
