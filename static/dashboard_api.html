@@ -2738,6 +2738,18 @@ let editingEncomendaId = null;
                 encomendas = data;
                 // Mantém uma referência global a todas as encomendas para cálculos de reservas
                 window.allEncomendas = data;
+                
+                // VERIFICAÇÃO AUTOMÁTICA: Força verificação de encomendas prontas
+                try {
+                    await fetch(`${API_BASE}/verificar-prontos`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                    console.log('Verificação automática de encomendas prontas executada');
+                } catch (e) {
+                    console.warn('Erro na verificação automática:', e);
+                }
+                
                 // Aplica filtro selecionado antes de renderizar
                 applyEncomendaFilter();
                 // Atualiza indicadores do dashboard após carregar encomendas
@@ -3198,6 +3210,17 @@ let editingEncomendaId = null;
                     renderEstoqueTable(result);
                     document.getElementById('estoqueLoading').style.display = 'none';
                     document.getElementById('estoqueContent').style.display = 'block';
+                    
+                    // VERIFICAÇÃO AUTOMÁTICA: Força verificação de encomendas prontas após carregar estoque
+                    try {
+                        await fetch(`${API_BASE}/verificar-prontos`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                        console.log('Verificação automática de encomendas prontas executada após carregar estoque');
+                    } catch (e) {
+                        console.warn('Erro na verificação automática após carregar estoque:', e);
+                    }
                 } else {
                     throw new Error(data.error || 'Erro ao carregar estoque');
                 }
@@ -3413,7 +3436,9 @@ let editingEncomendaId = null;
                 if (baixarGroup) {
                     baixarGroup.style.display = 'none';
                 }
-                estoque.materiais.forEach(material => {
+                // Remove duplicatas usando Set
+                const uniqueMaterials = [...new Map(estoque.materiais.map(m => [m.nome, m])).values()];
+                uniqueMaterials.forEach(material => {
                     const option = document.createElement('option');
                     option.value = material.nome;
                     option.textContent = material.nome;
@@ -3424,7 +3449,9 @@ let editingEncomendaId = null;
                 if (baixarGroup) {
                     baixarGroup.style.display = 'block';
                 }
-                estoque.municoes.forEach(municao => {
+                // Remove duplicatas usando Set
+                const uniqueMunicoes = [...new Map(estoque.municoes.map(m => [m.nome || m.tipo, m])).values()];
+                uniqueMunicoes.forEach(municao => {
                     const option = document.createElement('option');
                     // Para munições, utilizamos o campo nome (ex.: 5mm, 9mm, 762mm, 12cbc)
                     option.value = municao.nome || municao.tipo;
@@ -3957,14 +3984,18 @@ let editingEncomendaId = null;
             itemSelect.innerHTML = '<option value="">Selecione...</option>';
             if (!estoque || !estoque.materiais || !estoque.municoes) return;
             if (tipo === 'material') {
-                estoque.materiais.forEach(mat => {
+                // Remove duplicatas usando Set
+                const uniqueMaterials = [...new Map(estoque.materiais.map(m => [m.nome, m])).values()];
+                uniqueMaterials.forEach(mat => {
                     const option = document.createElement('option');
                     option.value = mat.nome;
                     option.textContent = mat.nome;
                     itemSelect.appendChild(option);
                 });
             } else if (tipo === 'municao') {
-                estoque.municoes.forEach(municao => {
+                // Remove duplicatas usando Set
+                const uniqueMunicoes = [...new Map(estoque.municoes.map(m => [m.nome || m.tipo, m])).values()];
+                uniqueMunicoes.forEach(municao => {
                     const option = document.createElement('option');
                     option.value = municao.nome || municao.tipo;
                     option.textContent = formatMunicaoName(municao.nome || municao.tipo);
@@ -3980,14 +4011,18 @@ let editingEncomendaId = null;
             itemSelect.innerHTML = '<option value="">Selecione...</option>';
             if (!estoque || !estoque.materiais || !estoque.municoes) return;
             if (tipo === 'material') {
-                estoque.materiais.forEach(mat => {
+                // Remove duplicatas usando Set
+                const uniqueMaterials = [...new Map(estoque.materiais.map(m => [m.nome, m])).values()];
+                uniqueMaterials.forEach(mat => {
                     const option = document.createElement('option');
                     option.value = mat.nome;
                     option.textContent = mat.nome;
                     itemSelect.appendChild(option);
                 });
             } else if (tipo === 'municao') {
-                estoque.municoes.forEach(municao => {
+                // Remove duplicatas usando Set
+                const uniqueMunicoes = [...new Map(estoque.municoes.map(m => [m.nome || m.tipo, m])).values()];
+                uniqueMunicoes.forEach(municao => {
                     const option = document.createElement('option');
                     option.value = municao.nome || municao.tipo;
                     option.textContent = formatMunicaoName(municao.nome || municao.tipo);
