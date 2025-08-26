@@ -244,17 +244,20 @@ function initDatabase() {
             // -------------------------------------------------------------------
             // Tabelas de Inventário da Família e Requisições de Itens
             // -------------------------------------------------------------------
-            // Inventário da família: itens agrupados por categoria e subcategoria.
+            // Inventário da família: itens agrupados por categoria e item. Não há
+            // mais conceito de subcategoria; cada registro associa um item a uma
+            // categoria.  Um índice único em (categoria, item) impede
+            // duplicidades.
             db.run(`CREATE TABLE IF NOT EXISTS inventario_familia (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 categoria TEXT NOT NULL,
-                subcategoria TEXT NOT NULL,
+                item TEXT NOT NULL,
                 quantidade INTEGER DEFAULT 0,
                 preco REAL DEFAULT 0,
                 data_atualizacao DATETIME DEFAULT CURRENT_TIMESTAMP
             )`);
-            // Índice único para evitar duplicidade (categoria, subcategoria)
-            db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_inventario_cat_sub ON inventario_familia(categoria, subcategoria)');
+            // Índice único para evitar duplicidade (categoria, item)
+            db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_inventario_cat_item ON inventario_familia(categoria, item)');
 
             // Requisições de itens da família: registra pedidos de membros/gerentes
             // e o processamento por líderes ou administradores.
@@ -276,6 +279,72 @@ function initDatabase() {
                 FOREIGN KEY (membro_id) REFERENCES membros(id),
                 FOREIGN KEY (lider_id) REFERENCES usuarios(id)
             )`);
+
+            // Preenche o inventário da família com categorias e itens padrão, se
+            // ainda não existirem.  As quantidades iniciais são 0 e o preço
+            // inicial é 0. Use INSERT OR IGNORE para evitar duplicatas caso
+            // os itens já tenham sido cadastrados.
+            const itensFamilia = [
+                // Produtos Comprados
+                { categoria: 'Produtos Comprados', item: 'Erva' },
+                { categoria: 'Produtos Comprados', item: 'Farinha' },
+                { categoria: 'Produtos Comprados', item: 'Lança' },
+                { categoria: 'Produtos Comprados', item: 'Viagra' },
+                { categoria: 'Produtos Comprados', item: 'H.' },
+                { categoria: 'Produtos Comprados', item: 'Oxy' },
+                { categoria: 'Produtos Comprados', item: 'Balinha' },
+                { categoria: 'Produtos Comprados', item: 'Rapé' },
+                // Produtos para Roubo
+                { categoria: 'Produtos para Roubo', item: 'C4' },
+                { categoria: 'Produtos para Roubo', item: 'Masterpick' },
+                // Produtos de Ação Fechada
+                { categoria: 'Produtos de Ação Fechada', item: 'MK1' },
+                { categoria: 'Produtos de Ação Fechada', item: 'MK2' },
+                { categoria: 'Produtos de Ação Fechada', item: 'MK3' },
+                { categoria: 'Produtos de Ação Fechada', item: 'MK4' },
+                { categoria: 'Produtos de Ação Fechada', item: 'MK5' },
+                { categoria: 'Produtos de Ação Fechada', item: 'Chave Ouro' },
+                { categoria: 'Produtos de Ação Fechada', item: 'Chave Platina' },
+                // Produtos de Ação - Pistolas
+                { categoria: 'Produtos de Ação - Pistolas', item: 'Five' },
+                { categoria: 'Produtos de Ação - Pistolas', item: 'Desert' },
+                { categoria: 'Produtos de Ação - Pistolas', item: '.45 acb' },
+                { categoria: 'Produtos de Ação - Pistolas', item: 'colt 45' },
+                { categoria: 'Produtos de Ação - Pistolas', item: 'm1911' },
+                // Produtos de Ação - Sub-metralhadora
+                { categoria: 'Produtos de Ação - Sub-metralhadora', item: 'Mtar' },
+                { categoria: 'Produtos de Ação - Sub-metralhadora', item: 'Tec-9' },
+                { categoria: 'Produtos de Ação - Sub-metralhadora', item: 'Mini uzi' },
+                { categoria: 'Produtos de Ação - Sub-metralhadora', item: 'M-tar 21' },
+                // Produtos de Ação - Fuzil
+                { categoria: 'Produtos de Ação - Fuzil', item: 'AK 103' },
+                { categoria: 'Produtos de Ação - Fuzil', item: 'AUG' },
+                { categoria: 'Produtos de Ação - Fuzil', item: 'AK 47' },
+                { categoria: 'Produtos de Ação - Fuzil', item: 'M16' },
+                // Produtos de Ação - Escopeta
+                { categoria: 'Produtos de Ação - Escopeta', item: 'spas 12' },
+                // Equipamentos diversos
+                { categoria: 'Equipamentos', item: 'Pager' },
+                { categoria: 'Equipamentos', item: 'Camisa de Força' },
+                { categoria: 'Equipamentos', item: 'Algema' },
+                { categoria: 'Equipamentos', item: 'Capuz' },
+                { categoria: 'Equipamentos', item: 'Adrenalina' },
+                { categoria: 'Equipamentos', item: 'Colete' },
+                { categoria: 'Equipamentos', item: 'Placa' },
+                { categoria: 'Equipamentos', item: 'Vaselina' },
+                { categoria: 'Equipamentos', item: 'Rastreador' },
+                // Acessórios
+                { categoria: 'Acessórios', item: 'Attats' },
+                { categoria: 'Acessórios', item: 'Supressor' },
+                { categoria: 'Acessórios', item: 'Grip avançado' },
+                { categoria: 'Acessórios', item: 'Compensador' },
+                { categoria: 'Acessórios', item: 'Clipe extendido' },
+                { categoria: 'Acessórios', item: 'Lanterna' }
+            ];
+            itensFamilia.forEach(item => {
+                db.run('INSERT OR IGNORE INTO inventario_familia (categoria, item, quantidade, preco) VALUES (?, ?, 0, 0)',
+                    [item.categoria, item.item]);
+            });
 
             // Tabela de configuração geral. Armazena chaves de configuração como a taxa de comissão.
             db.run(`CREATE TABLE IF NOT EXISTS config (
@@ -395,37 +464,29 @@ async function generateRotasParaProximaSemana() {
             datas.push(isoDate);
         }
 
-        // Buscar todos os membros ativos que tenham o cargo 'membro'
-        // Somente membros (e não gerentes/líderes) devem receber rotas pendentes automaticamente
+        // Buscar todos os membros ativos que tenham o cargo 'membro'. Somente
+        // membros (e não gerentes/líderes) recebem rotas pendentes
         db.all('SELECT id, nome FROM membros WHERE ativo = 1 AND cargo = "membro"', (err, membros) => {
             if (err) {
                 console.error('Erro ao consultar membros para geração de rotas:', err.message);
                 return reject(err);
             }
-            // Para cada membro e cada data, criar rota se não existir
             let pendentes = 0;
+            // Para cada membro e cada data, tenta inserir a rota.  Se já
+            // existir uma rota para a combinação (membro_id, data_entrega), a
+            // inserção será ignorada por causa do índice único idx_rotas_membro_data.
             membros.forEach(membro => {
                 datas.forEach(dataEntrega => {
-                    db.get('SELECT id FROM rotas WHERE membro_id = ? AND data_entrega = ?', [membro.id, dataEntrega], (err2, row) => {
-                        if (err2) {
-                            console.error('Erro ao verificar rotas existentes:', err2.message);
-                            return;
-                        }
-                        if (!row) {
-                            // Inserir rota pendente com quantidade zero
-                            db.run('INSERT INTO rotas (membro_id, membro_nome, quantidade, data_entrega, status) VALUES (?, ?, ?, ?, ?)',
-                                [membro.id, membro.nome, 0, dataEntrega, 'pendente'], function (err3) {
-                                    if (err3) {
-                                        console.error('Erro ao inserir rota pendente:', err3.message);
-                                    } else {
-                                        pendentes++;
-                                    }
-                                });
-                        }
-                    });
+                    db.run('INSERT OR IGNORE INTO rotas (membro_id, membro_nome, quantidade, data_entrega, status) VALUES (?, ?, ?, ?, ?)',
+                        [membro.id, membro.nome, 0, dataEntrega, 'pendente'], function(err2) {
+                            if (err2) {
+                                console.error('Erro ao inserir rota pendente:', err2.message);
+                            } else if (this.changes > 0) {
+                                pendentes++;
+                            }
+                        });
                 });
             });
-            // Não esperamos todas as inserções terminarem (assíncronas), apenas registra
             console.log(`Rotas geradas/atualizadas para a próxima semana: ${pendentes}`);
             resolve();
         });
@@ -1706,7 +1767,9 @@ app.post('/api/familias', authenticateToken, (req, res) => {
  * campos: id, categoria, subcategoria, quantidade e preco.
  */
 app.get('/api/inventario-familia', authenticateToken, (req, res) => {
-    db.all('SELECT * FROM inventario_familia ORDER BY categoria, subcategoria', (err, rows) => {
+    // Lista todos os itens do inventário, ordenados por categoria e item. Não
+    // existe mais o campo subcategoria.
+    db.all('SELECT * FROM inventario_familia ORDER BY categoria, item', (err, rows) => {
         if (err) {
             return res.status(500).json({ error: err.message });
         }
@@ -1728,15 +1791,15 @@ app.post('/api/inventario-familia', authenticateToken, (req, res) => {
     if (role !== 'admin' && role !== 'lider') {
         return res.status(403).json({ error: 'Acesso negado' });
     }
-    const { categoria, subcategoria, quantidade, preco } = req.body;
+    const { categoria, item, quantidade, preco } = req.body;
     const qtd = parseInt(quantidade);
     const price = preco !== undefined && preco !== null ? parseFloat(preco) : null;
-    if (!categoria || !subcategoria || isNaN(qtd) || qtd < 0) {
-        return res.status(400).json({ error: 'Categoria, subcategoria e quantidade válidas são obrigatórias' });
+    if (!categoria || !item || isNaN(qtd) || qtd < 0) {
+        return res.status(400).json({ error: 'Categoria, item e quantidade válidas são obrigatórias' });
     }
     // Tenta atualizar um item existente; se nenhum item for atualizado,
     // insere um novo registro.
-    db.get('SELECT * FROM inventario_familia WHERE categoria = ? AND subcategoria = ?', [categoria, subcategoria], (err, existing) => {
+    db.get('SELECT * FROM inventario_familia WHERE categoria = ? AND item = ?', [categoria, item], (err, existing) => {
         if (err) {
             return res.status(500).json({ error: err.message });
         }
@@ -1756,15 +1819,15 @@ app.post('/api/inventario-familia', authenticateToken, (req, res) => {
             });
         } else {
             const insertPrice = price !== null ? price : 0;
-            db.run('INSERT INTO inventario_familia (categoria, subcategoria, quantidade, preco) VALUES (?, ?, ?, ?)', [categoria, subcategoria, qtd, insertPrice], function (insertErr) {
+            db.run('INSERT INTO inventario_familia (categoria, item, quantidade, preco) VALUES (?, ?, ?, ?)', [categoria, item, qtd, insertPrice], function (insertErr) {
                 if (insertErr) {
                     return res.status(500).json({ error: insertErr.message });
                 }
-                db.get('SELECT * FROM inventario_familia WHERE id = ?', [this.lastID], (selErr, item) => {
+                db.get('SELECT * FROM inventario_familia WHERE id = ?', [this.lastID], (selErr, newItem) => {
                     if (selErr) {
                         return res.status(500).json({ error: selErr.message });
                     }
-                    res.json(item);
+                    res.json(newItem);
                 });
             });
         }
@@ -1864,7 +1927,7 @@ app.post('/api/requisicoes-familia', authenticateToken, (req, res) => {
                     if (insertErr) {
                         return res.status(500).json({ error: insertErr.message });
                     }
-                    db.get(`SELECT r.*, i.categoria, i.subcategoria
+                    db.get(`SELECT r.*, i.categoria, i.item
                             FROM requisicoes_familia r
                             JOIN inventario_familia i ON i.id = r.item_id
                             WHERE r.id = ?`, [this.lastID], (selErr, reqRow) => {
@@ -1889,7 +1952,7 @@ app.post('/api/requisicoes-familia', authenticateToken, (req, res) => {
 app.get('/api/requisicoes-familia', authenticateToken, (req, res) => {
     const role = req.user && req.user.role;
     // Monta a consulta base com join para trazer categoria e subcategoria
-    let sql = `SELECT r.*, i.categoria, i.subcategoria, u.username AS lider_username
+    let sql = `SELECT r.*, i.categoria, i.item, u.username AS lider_username
                FROM requisicoes_familia r
                JOIN inventario_familia i ON i.id = r.item_id
                LEFT JOIN usuarios u ON u.id = r.lider_id`;
@@ -1937,7 +2000,7 @@ app.put('/api/requisicoes-familia/:id/aprovar', authenticateToken, (req, res) =>
             if (updateErr) {
                 return res.status(500).json({ error: updateErr.message });
             }
-            db.get(`SELECT r.*, i.categoria, i.subcategoria, u.username AS lider_username
+            db.get(`SELECT r.*, i.categoria, i.item, u.username AS lider_username
                     FROM requisicoes_familia r
                     JOIN inventario_familia i ON i.id = r.item_id
                     LEFT JOIN usuarios u ON u.id = r.lider_id
@@ -1979,7 +2042,7 @@ app.put('/api/requisicoes-familia/:id/rejeitar', authenticateToken, (req, res) =
             if (updateErr) {
                 return res.status(500).json({ error: updateErr.message });
             }
-            db.get(`SELECT r.*, i.categoria, i.subcategoria, u.username AS lider_username
+            db.get(`SELECT r.*, i.categoria, i.item, u.username AS lider_username
                     FROM requisicoes_familia r
                     JOIN inventario_familia i ON i.id = r.item_id
                     LEFT JOIN usuarios u ON u.id = r.lider_id
@@ -2038,11 +2101,11 @@ app.put('/api/requisicoes-familia/:id/entregar', authenticateToken, (req, res) =
                     if (updateReqErr) {
                         return res.status(500).json({ error: updateReqErr.message });
                     }
-                    db.get(`SELECT r.*, i.categoria, i.subcategoria, u.username AS lider_username
-                            FROM requisicoes_familia r
-                            JOIN inventario_familia i ON i.id = r.item_id
-                            LEFT JOIN usuarios u ON u.id = r.lider_id
-                            WHERE r.id = ?`, [id], (selErr, updated) => {
+            db.get(`SELECT r.*, i.categoria, i.item, u.username AS lider_username
+                    FROM requisicoes_familia r
+                    JOIN inventario_familia i ON i.id = r.item_id
+                    LEFT JOIN usuarios u ON u.id = r.lider_id
+                    WHERE r.id = ?`, [id], (selErr, updated) => {
                         if (selErr) {
                             return res.status(500).json({ error: selErr.message });
                         }
@@ -2095,7 +2158,7 @@ app.put('/api/requisicoes-familia/:id/cancelar', authenticateToken, (req, res) =
                     if (updateReqErr) {
                         return res.status(500).json({ error: updateReqErr.message });
                     }
-                    db.get(`SELECT r.*, i.categoria, i.subcategoria, u.username AS lider_username
+                    db.get(`SELECT r.*, i.categoria, i.item, u.username AS lider_username
                             FROM requisicoes_familia r
                             JOIN inventario_familia i ON i.id = r.item_id
                             LEFT JOIN usuarios u ON u.id = r.lider_id
@@ -2135,8 +2198,9 @@ async function startServer() {
     try {
         await initDatabase();
 
-        // Após inicializar o banco de dados, gera rotas pendentes para a próxima semana.
-        await generateRotasParaProximaSemana();
+        // A geração automática de rotas pendentes para a próxima semana foi
+        // removida a pedido do usuário.  Rotas serão criadas apenas
+        // manualmente ou por outras regras de negócio.
         
         app.listen(PORT, '0.0.0.0', () => {
             console.log(`🚀 Servidor rodando na porta ${PORT}`);
