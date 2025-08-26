@@ -171,19 +171,26 @@ function initDatabase() {
                 data_atualizacao DATETIME DEFAULT CURRENT_TIMESTAMP
             )`);
 
-            // Cria um índice único para evitar duplicidades de (tipo, nome) no estoque.  
-            db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_estoque_tipo_nome ON estoque(tipo, nome)', (err) => {
-                if (err) {
-                    console.error('Erro ao criar índice único em estoque:', err.message);
-                } else {
-                    // Remove linhas duplicadas mantendo apenas o primeiro registro (menor rowid)
-                    db.run(`DELETE FROM estoque
-                            WHERE rowid NOT IN (SELECT MIN(rowid) FROM estoque GROUP BY tipo, nome)`, (delErr) => {
-                        if (delErr) {
-                            console.error('Erro ao remover duplicatas do estoque:', delErr.message);
-                        }
-                    });
+            // Antes de criar o índice único no estoque, remova eventuais registros
+            // duplicados de (tipo, nome). Caso duplicatas existam, a criação do
+            // índice único falharia com um erro de violação de restrição, o que
+            // impediria a remoção posterior. Para garantir que o índice seja
+            // criado sem erros, primeiro eliminamos todas as duplicatas
+            // preservando o registro de menor rowid para cada par (tipo, nome).
+            db.run(`DELETE FROM estoque
+                    WHERE rowid NOT IN (SELECT MIN(rowid) FROM estoque GROUP BY tipo, nome)`, (delErr) => {
+                if (delErr) {
+                    console.error('Erro ao remover duplicatas do estoque:', delErr.message);
                 }
+                // Depois de garantir que não há registros duplicados, cria o índice
+                // único. Se o índice já existir, nada é feito. Se ainda não existir,
+                // ele será criado sem violar a restrição, pois não há mais
+                // duplicatas.
+                db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_estoque_tipo_nome ON estoque(tipo, nome)', (idxErr) => {
+                    if (idxErr) {
+                        console.error('Erro ao criar índice único em estoque:', idxErr.message);
+                    }
+                });
             });
 
             // Tabela de imagens
