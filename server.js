@@ -1916,11 +1916,8 @@ app.post('/api/requisicoes-familia', authenticateToken, (req, res) => {
     if (isNaN(item_id) || isNaN(qty) || qty <= 0) {
         return res.status(400).json({ error: 'Item e quantidade válidos são obrigatórios' });
     }
-    // Somente membros ou gerentes podem criar requisições
+    // Todos os usuários podem criar requisições
     const role = req.user && req.user.role;
-    if (role === 'admin' || role === 'lider') {
-        return res.status(403).json({ error: 'Líderes e administradores não podem solicitar itens' });
-    }
     // Verifica se o item existe no inventário
     db.get('SELECT * FROM inventario_familia WHERE id = ?', [item_id], (err, item) => {
         if (err) {
