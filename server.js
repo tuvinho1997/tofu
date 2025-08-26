@@ -697,9 +697,9 @@ app.get('/api/rotas', (req, res) => {
     });
 });
 
-// Cria uma nova rota. Apenas usuários autenticados podem cadastrar rotas.  
+// Cria uma nova rota. Todos podem cadastrar rotas.  
 // Membros e gerentes podem cadastrar rotas, mas não podem editá-las posteriormente.  
-app.post('/api/rotas', authenticateToken, (req, res) => {
+app.post('/api/rotas', (req, res) => {
     const { membro_nome, quantidade, data_entrega, status, comprovante } = req.body;
     if (!membro_nome || !quantidade || !data_entrega) {
         return res.status(400).json({ error: 'Membro, quantidade e data de entrega são obrigatórios' });

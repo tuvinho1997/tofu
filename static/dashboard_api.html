@@ -1829,8 +1829,8 @@ let editingEncomendaId = null;
                 // Exibe ou oculta botões de administração conforme o papel do usuário.
                 const addFamiliaBtn = document.getElementById('btnAddFamilia');
                 if (addFamiliaBtn) {
-                    // Exibe o botão de cadastro de famílias para administradores, gerentes ou líderes
-                    if (user.role === 'admin' || user.role === 'gerente' || user.role === 'lider') {
+                    // Exibe o botão de cadastro de famílias apenas para administradores ou líderes
+                    if (user.role === 'admin' || user.role === 'lider') {
                         addFamiliaBtn.style.display = 'inline-block';
                     } else {
                         addFamiliaBtn.style.display = 'none';
@@ -2385,8 +2385,8 @@ let editingEncomendaId = null;
                 const row = document.createElement('tr');
                 // Constrói as ações: sempre incluir botão Excluir; se usuário atual tiver permissões de admin/gerente/lider, incluir botão Editar
                 let acoes = '';
-                // Editar (permite alterar nome, RG e cargo)
-                if (currentUser && (currentUser.role === 'admin' || currentUser.role === 'gerente' || currentUser.role === 'lider')) {
+                // Editar (permite alterar nome, RG e cargo) - apenas admin e lider
+                if (currentUser && (currentUser.role === 'admin' || currentUser.role === 'lider')) {
                     acoes += `<button class="btn-secondary" style="background: #3498db; padding: 6px 12px; font-size: 12px; margin-right: 5px;" onclick="openEditMembroModal(${membro.id})">Editar</button>`;
                 }
                 // Excluir
@@ -3874,10 +3874,10 @@ let editingEncomendaId = null;
                 let html = '';
                 if (Array.isArray(data)) {
                     data.forEach(item => {
-                        // Se o usuário logado for admin, gerente ou líder, permite edição do estoque
+                        // Se o usuário logado for admin ou líder, permite edição do estoque
                         let editable = false;
                         try {
-                            if (currentUser && ['admin','gerente','lider'].includes(currentUser.role)) {
+                            if (currentUser && ['admin','lider'].includes(currentUser.role)) {
                                 editable = true;
                             }
                         } catch (e) {}
