@@ -35,6 +35,12 @@ app.use('/api', (req, res, next) => {
     res.setHeader('Content-Type', 'application/json');
     next();
 });
+
+// Redireciona a raiz para a página de login
+app.get('/', (req, res) => {
+    res.redirect(302, '/static/login_simple.html');
+});
+
 // Servir arquivos estáticos na raiz e também sob o prefixo /static.
 // Isso permite acessar login_simple.html tanto em /login_simple.html quanto em /static/login_simple.html.
 app.use(express.static(path.join(__dirname, 'static')));
@@ -2402,11 +2408,6 @@ app.get('/api/relatorios/rotas', (req, res) => {
     });
 });
 
-// Iniciar servidor
-app.listen(PORT, () => {
-    console.log(`Servidor rodando na porta ${PORT}`);
-});
-
 // Endpoint para registrar pagamento de rota
 app.put('/api/rotas/:id/pagamento', authenticateToken, (req, res) => {
     const { id } = req.params;
@@ -2547,5 +2548,8 @@ app.delete('/api/inventario-familia/item/:nome', authenticateToken, (req, res) =
     });
 });
 
-
+// Iniciar servidor
+app.listen(PORT, () => {
+    console.log(`Servidor rodando na porta ${PORT}`);
+});
 
