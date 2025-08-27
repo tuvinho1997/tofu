@@ -1089,7 +1089,7 @@
                     <div class="stat-card">
                         <div class="stat-icon">💹</div>
                         <div class="stat-number" id="lucroTotal">R$ 0,00</div>
-                        <div class="stat-label">Lucro Total (Venda – Materiais – Comissão – Taxa Fabr.)</div>
+                        <div class="stat-label">Lucro Total (Venda – Materiais – Comissão – Taxa Fabr.)</div>
                     </div>
                 </div>
             </div>
@@ -1581,6 +1581,11 @@
                 <button class="close-btn" onclick="closeModal('inventarioModal')">&times;</button>
             </div>
             <div class="modal-body" style="max-height: 400px; overflow-y: auto;">
+                <div style="margin-bottom: 15px; text-align: right;">
+                    <button id="btnSalvarTudo" class="btn-primary" onclick="salvarTudoInventario()" style="display: none;">
+                        💾 Salvar Tudo
+                    </button>
+                </div>
                 <table class="table">
                     <thead>
                         <tr>
@@ -4013,22 +4018,30 @@ let editingEncomendaId = null;
                 console.log('🔍 loadInventario - Dados recebidos:', data);
                 const tbody = document.getElementById('inventarioTableBody');
                 if (!tbody) return;
+                
+                // Verificar se o usuário pode editar
+                let editable = false;
+                try {
+                    if (currentUser && ['admin','lider'].includes(currentUser.role)) {
+                        editable = true;
+                    }
+                } catch (e) {}
+                
+                // Mostrar/ocultar botão "Salvar Tudo"
+                const btnSalvarTudo = document.getElementById('btnSalvarTudo');
+                if (btnSalvarTudo) {
+                    btnSalvarTudo.style.display = editable ? 'inline-block' : 'none';
+                }
+                
                 let html = '';
                 if (Array.isArray(data)) {
                     data.forEach(item => {
-                        // Se o usuário logado for admin ou líder, permite edição do estoque
-                        let editable = false;
-                        try {
-                            if (currentUser && ['admin','lider'].includes(currentUser.role)) {
-                                editable = true;
-                            }
-                        } catch (e) {}
                         if (editable) {
                             html += `<tr>
                                 <td>${item.tipo}</td>
                                 <td>${item.nome}</td>
                                 <td>
-                                    <input type="number" id="inventario_qtd_${item.id}" value="${item.quantidade}" min="0" style="width:80px; padding:4px; margin-right:5px;">
+                                    <input type="number" id="inventario_qtd_${item.id}" value="${item.quantidade}" min="0" style="width:80px; padding:4px; margin-right:5px;" onchange="marcarItemModificado(${item.id})">
                                     <button class="btn-primary" style="padding:4px 8px; font-size:12px;" onclick="salvarInventarioItem(${item.id})">Salvar</button>
                                 </td>
                             </tr>`;
@@ -4038,6 +4051,9 @@ let editingEncomendaId = null;
                     });
                 }
                 tbody.innerHTML = html || '<tr><td colspan="3" style="text-align:center; color:#95a5a6; padding:20px;">Nenhum item encontrado</td></tr>';
+                
+                // Limpar lista de itens modificados
+                window.itensModificados = new Set();
             } catch (error) {
                 console.error('Erro ao carregar inventário:', error);
             }
@@ -4063,31 +4079,18 @@ let editingEncomendaId = null;
                 console.log('🔍 salvarInventarioItem - Token:', token ? 'Presente' : 'Ausente');
                 console.log('🔍 salvarInventarioItem - ID do item:', id);
                 
-                // Primeiro, buscar o item para obter tipo e nome
-                const itemResponse = await fetch(`${API_BASE}/estoque`, {
-                    headers: {
-                        'Authorization': token ? `Bearer ${token}` : ''
-                    }
-                });
-                
-                console.log('🔍 salvarInventarioItem - Status da busca do item:', itemResponse.status);
-                
-                if (!itemResponse.ok) {
-                    const errorText = await itemResponse.text();
-                    console.error('❌ Erro ao buscar item:', errorText);
-                    throw new Error('Erro ao buscar dados do item');
+                // Obter tipo e nome diretamente da linha da tabela
+                const row = input.closest('tr');
+                if (!row) {
+                    throw new Error('Não foi possível identificar o item');
                 }
                 
-                const itens = await itemResponse.json();
-                const item = itens.find(i => i.id == id);
+                const tipo = row.cells[0].textContent;
+                const nome = row.cells[1].textContent;
                 
-                console.log('🔍 salvarInventarioItem - Item encontrado:', item);
+                console.log('🔍 salvarInventarioItem - Tipo:', tipo, 'Nome:', nome);
                 
-                if (!item) {
-                    throw new Error('Item não encontrado');
-                }
-                
-                const url = `${API_BASE}/estoque/${item.tipo}/${encodeURIComponent(item.nome)}`;
+                const url = `${API_BASE}/estoque/${tipo}/${encodeURIComponent(nome)}`;
                 console.log('🔍 salvarInventarioItem - URL da requisição:', url);
                 
                 const response = await fetch(url, {
@@ -4103,6 +4106,10 @@ let editingEncomendaId = null;
                 const data = await response.json();
                 if (response.ok) {
                     alert(data.message || 'Item atualizado');
+                    // Remover da lista de itens modificados
+                    if (window.itensModificados) {
+                        window.itensModificados.delete(id);
+                    }
                     // Recarrega estoque e inventário
                     await loadEstoque();
                     await loadInventario();
@@ -4121,6 +4128,96 @@ let editingEncomendaId = null;
             } catch (error) {
                 console.error('Erro ao salvar inventário:', error);
                 alert('Erro ao salvar inventário: ' + error.message);
+            }
+        }
+
+        // Marca um item como modificado para controle do botão "Salvar Tudo"
+        function marcarItemModificado(id) {
+            if (!window.itensModificados) {
+                window.itensModificados = new Set();
+            }
+            window.itensModificados.add(id);
+            
+            // Mostrar botão "Salvar Tudo" se houver itens modificados
+            const btnSalvarTudo = document.getElementById('btnSalvarTudo');
+            if (btnSalvarTudo && window.itensModificados.size > 0) {
+                btnSalvarTudo.style.display = 'inline-block';
+            }
+        }
+
+        // Salva todos os itens modificados de uma vez
+        async function salvarTudoInventario() {
+            if (!window.itensModificados || window.itensModificados.size === 0) {
+                alert('Nenhum item foi modificado');
+                return;
+            }
+
+            try {
+                const token = localStorage.getItem('authToken');
+                if (!token) {
+                    alert('Token de autenticação não encontrado');
+                    return;
+                }
+
+                // Coletar todos os itens modificados
+                const itensParaSalvar = [];
+                window.itensModificados.forEach(id => {
+                    const input = document.getElementById('inventario_qtd_' + id);
+                    if (input) {
+                        const qtd = parseFloat(input.value);
+                        if (!isNaN(qtd) && qtd >= 0) {
+                            // Buscar o item no estoque para obter tipo e nome
+                            const row = input.closest('tr');
+                            if (row) {
+                                const tipo = row.cells[0].textContent;
+                                const nome = row.cells[1].textContent;
+                                itensParaSalvar.push({ tipo, nome, quantidade: qtd });
+                            }
+                        }
+                    }
+                });
+
+                if (itensParaSalvar.length === 0) {
+                    alert('Nenhum item válido para salvar');
+                    return;
+                }
+
+                // Confirmar operação
+                if (!confirm(`Deseja salvar ${itensParaSalvar.length} itens?`)) {
+                    return;
+                }
+
+                // Enviar requisição para salvar múltiplos itens
+                const response = await fetch(`${API_BASE}/estoque/atualizar-multiplos`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ itens: itensParaSalvar })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    alert(data.message || 'Itens salvos com sucesso!');
+                    // Limpar lista de itens modificados
+                    window.itensModificados.clear();
+                    // Ocultar botão "Salvar Tudo"
+                    const btnSalvarTudo = document.getElementById('btnSalvarTudo');
+                    if (btnSalvarTudo) {
+                        btnSalvarTudo.style.display = 'none';
+                    }
+                    // Recarregar dados
+                    await loadEstoque();
+                    await loadInventario();
+                    updateDashboardStats();
+                } else {
+                    alert(data.error || 'Erro ao salvar itens');
+                }
+            } catch (error) {
+                console.error('Erro ao salvar todos os itens:', error);
+                alert('Erro ao salvar itens: ' + error.message);
             }
         }
 

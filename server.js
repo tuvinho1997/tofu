@@ -1169,8 +1169,8 @@ app.delete('/api/encomendas/:id', authenticateToken, (req, res) => {
 
 // Rotas de estoque
 app.get('/api/estoque', authenticateToken, (req, res) => {
-    // Consolida duplicatas somando quantidades por tipo e nome
-    db.all('SELECT tipo, nome, SUM(quantidade) as quantidade, AVG(preco) as preco, MAX(data_atualizacao) as data_atualizacao FROM estoque GROUP BY tipo, nome ORDER BY tipo, nome', (err, rows) => {
+    // Consolida duplicatas somando quantidades por tipo e nome, mas mantém o ID do primeiro registro
+    db.all('SELECT MIN(id) as id, tipo, nome, SUM(quantidade) as quantidade, AVG(preco) as preco, MAX(data_atualizacao) as data_atualizacao FROM estoque GROUP BY tipo, nome ORDER BY tipo, nome', (err, rows) => {
         if (err) {
             return res.status(500).json({ error: err.message });
         }
@@ -1196,6 +1196,73 @@ app.put('/api/estoque/:tipo/:item', authenticateToken, (req, res) => {
             console.error('Erro ao verificar encomendas prontas após atualização de item de estoque:', err);
         });
     });
+});
+
+// Atualizar múltiplos itens de estoque de uma vez
+app.post('/api/estoque/atualizar-multiplos', authenticateToken, (req, res) => {
+    const { itens } = req.body;
+    
+    if (!Array.isArray(itens) || itens.length === 0) {
+        return res.status(400).json({ error: 'Lista de itens é obrigatória e deve ser um array' });
+    }
+
+    let itensProcessados = 0;
+    let erros = [];
+    let sucessos = 0;
+
+    itens.forEach((item, index) => {
+        const { tipo, nome, quantidade } = item;
+        
+        if (!tipo || !nome || quantidade === undefined || quantidade === null) {
+            erros.push(`Item ${index + 1}: dados incompletos`);
+            itensProcessados++;
+            if (itensProcessados === itens.length) {
+                finalizarResposta();
+            }
+            return;
+        }
+
+        db.run('UPDATE estoque SET quantidade = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE tipo = ? AND nome = ?', 
+               [quantidade, tipo, nome], function (err) {
+            if (err) {
+                erros.push(`Item ${index + 1} (${nome}): ${err.message}`);
+            } else if (this.changes > 0) {
+                sucessos++;
+            } else {
+                erros.push(`Item ${index + 1} (${nome}): não encontrado`);
+            }
+            
+            itensProcessados++;
+            if (itensProcessados === itens.length) {
+                finalizarResposta();
+            }
+        });
+    });
+
+    function finalizarResposta() {
+        if (erros.length === 0) {
+            res.json({ 
+                message: `${sucessos} itens atualizados com sucesso`,
+                sucessos: sucessos
+            });
+        } else if (sucessos === 0) {
+            res.status(400).json({ 
+                error: 'Nenhum item foi atualizado',
+                erros: erros
+            });
+        } else {
+            res.json({ 
+                message: `${sucessos} itens atualizados, ${erros.length} com erro`,
+                sucessos: sucessos,
+                erros: erros
+            });
+        }
+        
+        // Verifica se encomendas pendentes podem ser prontas
+        verificarEncomendasProntas().catch(err => {
+            console.error('Erro ao verificar encomendas prontas após atualização múltipla de estoque:', err);
+        });
+    }
 });
 
 // Atualizar estoque adicionando materiais ou munições. Disponível para todos os usuários autenticados.
