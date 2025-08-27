@@ -1,6 +1,14 @@
 const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
-const bcrypt = require('bcrypt');
+// Usa bcryptjs em vez de bcrypt puro para evitar a dependência nativa ausente.
+const bcrypt = require('bcryptjs');
+
+// Nome da coluna que identifica os itens na tabela inventario_familia. Alguns
+// bancos antigos usam "item" em vez de "nome". Esta variável será
+// inicializada durante a função initializeDatabase() consultando a
+// estrutura da tabela via PRAGMA. Quando null, as rotas de inventário
+// assumirão apenas id/quantidade/preço/imagem.
+let inventarioFamiliaNameColumn = null;
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const path = require('path');
@@ -11,7 +19,10 @@ const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(express.json());
-app.use(express.static('static'));
+// Servir arquivos estáticos na raiz e também sob o prefixo /static.
+// Isso permite acessar login_simple.html tanto em /login_simple.html quanto em /static/login_simple.html.
+app.use(express.static(path.join(__dirname, 'static')));
+app.use('/static', express.static(path.join(__dirname, 'static')));
 
 // Configuração do multer para upload de imagens
 const storage = multer.diskStorage({
@@ -120,10 +131,13 @@ function initializeDatabase() {
         data_upload DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
 
-    // Criar tabela de inventário família
+    // Criar tabela de inventário família. Por padrão usamos coluna
+    // "nome" para identificar o item, mas se um banco antigo já
+    // existe com coluna "item" em vez de "nome", a coluna antiga
+    // permanecerá. A verificação da coluna será feita depois via PRAGMA.
     db.run(`CREATE TABLE IF NOT EXISTS inventario_familia (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nome TEXT NOT NULL,
+        nome TEXT,
         quantidade INTEGER DEFAULT 0,
         preco REAL DEFAULT 0,
         imagem TEXT,
@@ -189,10 +203,58 @@ function initializeDatabase() {
         }
     });
 
-    // Criar índice único para inventário família
-    db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_inventario_familia_nome ON inventario_familia(nome)', (err) => {
+    // Detecta se a tabela inventario_familia possui coluna "nome" ou "item"
+    // e define a variável global inventarioFamiliaNameColumn. Também
+    // cria um índice único na coluna, se ela existir, para evitar
+    // duplicidades. O índice não será criado se nenhuma coluna de nome
+    // for encontrada.
+    db.all('PRAGMA table_info(inventario_familia)', (err, rows) => {
         if (err) {
-            console.error('Erro ao criar índice único em inventário família:', err.message);
+            console.error('Erro ao inspecionar a estrutura da tabela inventario_familia:', err.message);
+            return;
+        }
+        const colNome = rows.find(col => col.name === 'nome');
+        const colItem = rows.find(col => col.name === 'item');
+        if (colNome) {
+            inventarioFamiliaNameColumn = 'nome';
+            db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_inventario_familia_nome ON inventario_familia(nome)', (idxErr) => {
+                if (idxErr) {
+                    console.error('Erro ao criar índice único em inventário família:', idxErr.message);
+                }
+            });
+        } else if (colItem) {
+            inventarioFamiliaNameColumn = 'item';
+            db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_inventario_familia_item ON inventario_familia(item)', (idxErr) => {
+                if (idxErr) {
+                    console.error('Erro ao criar índice único em inventário família (coluna item):', idxErr.message);
+                }
+            });
+        } else {
+            inventarioFamiliaNameColumn = null;
+            console.warn('A tabela inventario_familia não possui colunas "nome" nem "item". Operações de nome serão ignoradas.');
+        }
+
+        // Após determinar a coluna, podemos fazer o seeding de itens de exemplo se
+        // a tabela estiver vazia. Inserimos somente se a coluna existir.
+        if (inventarioFamiliaNameColumn) {
+            db.all('SELECT COUNT(*) as count FROM inventario_familia', (countErr, countRows) => {
+                if (countErr) return;
+                if (countRows[0].count === 0) {
+                    const seedItems = [
+                        { nome: 'Alumínio', quantidade: 0, preco: 0, imagem: null },
+                        { nome: 'Cobre', quantidade: 0, preco: 0, imagem: null },
+                        { nome: 'Emb Plástica', quantidade: 0, preco: 0, imagem: null },
+                        { nome: 'Ferro', quantidade: 0, preco: 0, imagem: null },
+                        { nome: 'Titânio', quantidade: 0, preco: 0, imagem: null }
+                    ];
+                    seedItems.forEach(item => {
+                        const insertCols = [inventarioFamiliaNameColumn, 'quantidade', 'preco', 'imagem'].join(', ');
+                        const placeholders = ['?', '?', '?', '?'].join(', ');
+                        const values = [item.nome, item.quantidade, item.preco, item.imagem];
+                        db.run(`INSERT INTO inventario_familia (${insertCols}) VALUES (${placeholders})`, values);
+                    });
+                }
+            });
         }
     });
 
@@ -210,23 +272,28 @@ function initializeDatabase() {
         }
     });
 
-    // Criar índice único para estoque (tipo, nome). Antes de criar o índice, é necessário
-    // garantir que não há registros duplicados. Se o índice único já foi
-    // criado sem erros, primeiro eliminamos todas as duplicatas
-    // preservando o registro de menor rowid para cada par (tipo, nome).
-    db.run(`DELETE FROM estoque
-            WHERE rowid NOT IN (SELECT MIN(rowid) FROM estoque GROUP BY tipo, nome)`, (delErr) => {
-        if (delErr) {
-            console.error('Erro ao remover duplicatas do estoque:', delErr.message);
-        }
-        // Depois de garantir que não há registros duplicados, cria o índice
-        // único. Se o índice já existir, nada é feito. Se ainda não existir,
-        // ele será criado sem violar a restrição, pois não há mais
-        // duplicatas.
-        db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_estoque_tipo_nome ON estoque(tipo, nome)', (idxErr) => {
-            if (idxErr) {
-                console.error('Erro ao criar índice único em estoque:', idxErr.message);
+    // Consolidar e remover duplicatas no estoque. Agrupamos por tipo e pelo
+    // nome normalizado (trim e lower), somamos as quantidades e mantemos
+    // o registro de menor rowid. Não criamos mais um índice único,
+    // pois bancos de dados antigos ou valores acentuados podem
+    // causar conflitos. O front‑end deduplica as opções quando exibe
+    // os itens.
+    db.serialize(() => {
+        db.all(`SELECT tipo,
+                       LOWER(TRIM(nome)) AS norm_nome,
+                       SUM(quantidade) AS total_qty,
+                       MIN(rowid) AS keep_rowid
+                FROM estoque
+                GROUP BY tipo, norm_nome
+                HAVING COUNT(*) > 1`, (selErr, rows) => {
+            if (selErr) {
+                console.error('Erro ao selecionar duplicatas do estoque:', selErr.message);
+                return;
             }
+            rows.forEach(row => {
+                db.run('UPDATE estoque SET quantidade = ? WHERE rowid = ?', [row.total_qty, row.keep_rowid]);
+                db.run('DELETE FROM estoque WHERE tipo = ? AND LOWER(TRIM(nome)) = ? AND rowid <> ?', [row.tipo, row.norm_nome, row.keep_rowid]);
+            });
         });
     });
 
@@ -250,56 +317,8 @@ function initializeDatabase() {
                [item.tipo, item.nome, item.quantidade, item.preco]);
     });
 
-    // Inserir inventário família inicial se não existir
-    const inventarioInicial = [
-        { nome: '45acb', quantidade: 0, preco: 1500.00, imagem: '45acb.jpg' },
-        { nome: 'adrenalina', quantidade: 0, preco: 50.00, imagem: 'adrenalina.jpg' },
-        { nome: 'ak103', quantidade: 0, preco: 8000.00, imagem: 'ak103.jpg' },
-        { nome: 'ak47', quantidade: 0, preco: 7500.00, imagem: 'ak47.jpg' },
-        { nome: 'algema', quantidade: 0, preco: 200.00, imagem: 'algema.jpg' },
-        { nome: 'aug', quantidade: 0, preco: 9000.00, imagem: 'aug.jpg' },
-        { nome: 'balinha', quantidade: 0, preco: 25.00, imagem: 'balinha.jpg' },
-        { nome: 'c4', quantidade: 0, preco: 2000.00, imagem: 'c4.jpg' },
-        { nome: 'camisadeforca', quantidade: 0, preco: 500.00, imagem: 'camisadeforca.jpg' },
-        { nome: 'capuz', quantidade: 0, preco: 100.00, imagem: 'capuz.jpg' },
-        { nome: 'chavedeouro', quantidade: 0, preco: 1000.00, imagem: 'chavedeouro.jpg' },
-        { nome: 'chavedeplatina', quantidade: 0, preco: 2000.00, imagem: 'chavedeplatina.jpg' },
-        { nome: 'clipextendido', quantidade: 0, preco: 300.00, imagem: 'clipextendido.jpg' },
-        { nome: 'colete', quantidade: 0, preco: 1500.00, imagem: 'colete.jpg' },
-        { nome: 'colt45', quantidade: 0, preco: 2500.00, imagem: 'colt45.jpg' },
-        { nome: 'compensador', quantidade: 0, preco: 400.00, imagem: 'compensador.jpg' },
-        { nome: 'farinha', quantidade: 0, preco: 100.00, imagem: 'farinha.jpg' },
-        { nome: 'fiveseven', quantidade: 0, preco: 3000.00, imagem: 'fiveseven.jpg' },
-        { nome: 'flippermk4', quantidade: 0, preco: 1200.00, imagem: 'flippermk4.jpg' },
-        { nome: 'flippermk5', quantidade: 0, preco: 1500.00, imagem: 'flippermk5.jpg' },
-        { nome: 'grip', quantidade: 0, preco: 250.00, imagem: 'grip.jpg' },
-        { nome: 'h', quantidade: 0, preco: 75.00, imagem: 'h.jpg' },
-        { nome: 'katana', quantidade: 0, preco: 800.00, imagem: 'katana.jpg' },
-        { nome: 'lanterna', quantidade: 0, preco: 150.00, imagem: 'lanterna.jpg' },
-        { nome: 'lança', quantidade: 0, preco: 600.00, imagem: 'lança.jpg' },
-        { nome: 'm16', quantidade: 0, preco: 8500.00, imagem: 'm16.jpg' },
-        { nome: 'm1911', quantidade: 0, preco: 2000.00, imagem: 'm1911.jpg' },
-        { nome: 'masterpick', quantidade: 0, preco: 800.00, imagem: 'masterpick.jpg' },
-        { nome: 'miniuzi', quantidade: 0, preco: 4000.00, imagem: 'miniuzi.jpg' },
-        { nome: 'mira', quantidade: 0, preco: 200.00, imagem: 'mira.jpg' },
-        { nome: 'mtar', quantidade: 0, preco: 7000.00, imagem: 'mtar.jpg' },
-        { nome: 'mtar21', quantidade: 0, preco: 7500.00, imagem: 'mtar21.jpg' },
-        { nome: 'oxy', quantidade: 0, preco: 150.00, imagem: 'oxy.jpg' },
-        { nome: 'pager', quantidade: 0, preco: 300.00, imagem: 'pager.jpg' },
-        { nome: 'placa', quantidade: 0, preco: 2500.00, imagem: 'placa.jpg' },
-        { nome: 'rape', quantidade: 0, preco: 200.00, imagem: 'rape.jpg' },
-        { nome: 'rastreador', quantidade: 0, preco: 500.00, imagem: 'rastreador.jpg' },
-        { nome: 'spas12', quantidade: 0, preco: 6000.00, imagem: 'spas12.jpg' },
-        { nome: 'supressor', quantidade: 0, preco: 600.00, imagem: 'supressor.jpg' },
-        { nome: 'tec9', quantidade: 0, preco: 3500.00, imagem: 'tec9.jpg' },
-        { nome: 'vaselina', quantidade: 0, preco: 50.00, imagem: 'vaselina.jpg' },
-        { nome: 'viagra', quantidade: 0, preco: 100.00, imagem: 'viagra.jpg' }
-    ];
-
-    inventarioInicial.forEach(item => {
-        db.run('INSERT OR IGNORE INTO inventario_familia (nome, quantidade, preco, imagem) VALUES (?, ?, ?, ?)', 
-               [item.nome, item.quantidade, item.preco, item.imagem]);
-    });
+    // Seeding de inventário família removido: agora é feito de forma dinâmica na
+    // detecção da estrutura da tabela. Veja o código PRAGMA acima.
 
     // Criar tabela de configuração
     db.run(`CREATE TABLE IF NOT EXISTS config (
@@ -433,6 +452,74 @@ app.post('/api/login', (req, res) => {
                 role: user.role
             }
         });
+    });
+});
+
+// Alias para a rota de login utilizada pelo front-end login_simple.html. Aceita
+// POST em /api/auth/login e delega ao mesmo handler de /api/login.
+app.post('/api/auth/login', (req, res) => {
+    const { username, password } = req.body;
+    db.get('SELECT * FROM usuarios WHERE username = ?', [username], (err, user) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        if (!user || !bcrypt.compareSync(password, user.password)) {
+            return res.status(401).json({ error: 'Credenciais inválidas' });
+        }
+        const token = jwt.sign(
+            { id: user.id, username: user.username, role: user.role },
+            JWT_SECRET,
+            { expiresIn: '24h' }
+        );
+        res.json({
+            token,
+            user: { id: user.id, username: user.username, role: user.role }
+        });
+    });
+});
+
+// Rota de registro de usuário utilizada por login_simple.html.
+// Permite criar uma nova conta com role 'membro'. Também cadastra
+// automaticamente o membro na tabela membros com o nome, RG e telefone
+// fornecidos. Por motivos de simplicidade e segurança básica, caso o
+// username já exista, retorna erro.
+app.post('/api/auth/register', (req, res) => {
+    const { username, password, nome, rg, telefone } = req.body;
+    if (!username || !password || !nome) {
+        return res.status(400).json({ error: 'Dados incompletos para cadastro' });
+    }
+    // Verificar se já existe usuário com o mesmo username
+    db.get('SELECT id FROM usuarios WHERE username = ?', [username], (err, row) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        if (row) {
+            return res.status(400).json({ error: 'Nome de usuário já está em uso' });
+        }
+        // Hash da senha
+        const hashed = bcrypt.hashSync(password, 10);
+        // Inserir usuário com role padrão 'membro'
+        db.run(
+            'INSERT INTO usuarios (username, password, role) VALUES (?, ?, ?)',
+            [username, hashed, 'membro'],
+            function (userErr) {
+                if (userErr) {
+                    return res.status(500).json({ error: userErr.message });
+                }
+                const usuarioId = this.lastID;
+                // Inserir membro associado
+                db.run(
+                    'INSERT INTO membros (nome, rg, telefone, cargo) VALUES (?, ?, ?, ?)',
+                    [nome, rg || null, telefone || null, 'membro'],
+                    function (mErr) {
+                        if (mErr) {
+                            return res.status(500).json({ error: mErr.message });
+                        }
+                        return res.json({ message: 'Cadastro realizado com sucesso' });
+                    }
+                );
+            }
+        );
     });
 });
 
@@ -1569,9 +1656,23 @@ app.delete('/api/familias/:id', (req, res) => {
 
 // Rotas de inventário família
 app.get('/api/inventario-familia', (req, res) => {
-    db.all('SELECT * FROM inventario_familia ORDER BY nome', (err, rows) => {
+    // Seleciona os itens do inventário família ordenados pelo nome, se existir.
+    const orderBy = inventarioFamiliaNameColumn ? `ORDER BY ${inventarioFamiliaNameColumn}` : 'ORDER BY id';
+    const query = `SELECT * FROM inventario_familia ${orderBy}`;
+    db.all(query, (err, rows) => {
         if (err) {
             return res.status(500).json({ error: err.message });
+        }
+        // Para garantir compatibilidade, se a coluna de nome não existir,
+        // mapeia o valor para a propriedade nome no objeto retornado.
+        if (!inventarioFamiliaNameColumn) {
+            // Nada a mapear
+        } else if (inventarioFamiliaNameColumn !== 'nome') {
+            // Renomear coluna existente para "nome" na resposta
+            rows = rows.map(r => {
+                r.nome = r[inventarioFamiliaNameColumn];
+                return r;
+            });
         }
         res.json(rows);
     });
@@ -1579,11 +1680,20 @@ app.get('/api/inventario-familia', (req, res) => {
 
 app.post('/api/inventario-familia', (req, res) => {
     const { nome, quantidade, preco, imagem } = req.body;
-
-    db.run('INSERT INTO inventario_familia (nome, quantidade, preco, imagem) VALUES (?, ?, ?, ?)', 
-           [nome, quantidade || 0, preco || 0, imagem], function (err) {
+    // Prepara consulta de inserção dependendo da coluna de nome disponível
+    let query;
+    let values;
+    if (inventarioFamiliaNameColumn) {
+        query = `INSERT INTO inventario_familia (${inventarioFamiliaNameColumn}, quantidade, preco, imagem) VALUES (?, ?, ?, ?)`;
+        values = [nome, quantidade || 0, preco || 0, imagem];
+    } else {
+        // Não há coluna de nome: inserimos apenas quantidade, preco, imagem
+        query = 'INSERT INTO inventario_familia (quantidade, preco, imagem) VALUES (?, ?, ?)';
+        values = [quantidade || 0, preco || 0, imagem];
+    }
+    db.run(query, values, function (err) {
         if (err) {
-            if (err.message.includes('UNIQUE constraint failed')) {
+            if (err.message && err.message.includes('UNIQUE constraint failed')) {
                 return res.status(400).json({ error: 'Item já cadastrado' });
             }
             return res.status(500).json({ error: err.message });
@@ -1599,10 +1709,19 @@ app.put('/api/inventario-familia/:id', (req, res) => {
     const { id } = req.params;
     const { nome, quantidade, preco, imagem } = req.body;
 
-    db.run('UPDATE inventario_familia SET nome = ?, quantidade = ?, preco = ?, imagem = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE id = ?', 
-           [nome, quantidade, preco, imagem, id], function (err) {
+    // Monta consulta de atualização dependendo da coluna de nome disponível
+    let updateQuery;
+    let params;
+    if (inventarioFamiliaNameColumn) {
+        updateQuery = `UPDATE inventario_familia SET ${inventarioFamiliaNameColumn} = ?, quantidade = ?, preco = ?, imagem = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE id = ?`;
+        params = [nome, quantidade, preco, imagem, id];
+    } else {
+        updateQuery = 'UPDATE inventario_familia SET quantidade = ?, preco = ?, imagem = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE id = ?';
+        params = [quantidade, preco, imagem, id];
+    }
+    db.run(updateQuery, params, function (err) {
         if (err) {
-            if (err.message.includes('UNIQUE constraint failed')) {
+            if (err.message && err.message.includes('UNIQUE constraint failed')) {
                 return res.status(400).json({ error: 'Nome já existe para outro item' });
             }
             return res.status(500).json({ error: err.message });
@@ -1630,10 +1749,14 @@ app.delete('/api/inventario-familia/:id', (req, res) => {
 
 // Rotas de requisições família
 app.get('/api/requisicoes-familia', (req, res) => {
-    db.all(`SELECT r.*, i.nome as item_nome, i.preco as item_preco 
-            FROM requisicoes_familia r 
-            LEFT JOIN inventario_familia i ON r.item_id = i.id 
-            ORDER BY r.data_requisicao DESC`, (err, rows) => {
+    // Seleciona requisições junto com dados do inventário família. Usa a coluna de nome
+    // configurada ou retorna nulo se não houver coluna
+    const nomeCol = inventarioFamiliaNameColumn ? `i.${inventarioFamiliaNameColumn} as item_nome` : 'NULL as item_nome';
+    const query = `SELECT r.*, ${nomeCol}, i.preco as item_preco 
+                   FROM requisicoes_familia r 
+                   LEFT JOIN inventario_familia i ON r.item_id = i.id 
+                   ORDER BY r.data_requisicao DESC`;
+    db.all(query, (err, rows) => {
         if (err) {
             return res.status(500).json({ error: err.message });
         }
