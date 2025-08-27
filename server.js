@@ -9,6 +9,7 @@ const bcrypt = require('bcryptjs');
 // estrutura da tabela via PRAGMA. Quando null, as rotas de inventário
 // assumirão apenas id/quantidade/preço/imagem.
 let inventarioFamiliaNameColumn = null;
+let inventarioFamiliaHasCategoria = false;
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const path = require('path');
@@ -18,7 +19,22 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Middleware
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+
+// Middleware de tratamento de erro para JSON malformado
+app.use((err, req, res, next) => {
+    if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+        console.error('Erro de JSON malformado:', err.message);
+        return res.status(400).json({ error: 'JSON malformado na requisição' });
+    }
+    next();
+});
+
+// Middleware para garantir que respostas da API sejam sempre JSON
+app.use('/api', (req, res, next) => {
+    res.setHeader('Content-Type', 'application/json');
+    next();
+});
 // Servir arquivos estáticos na raiz e também sob o prefixo /static.
 // Isso permite acessar login_simple.html tanto em /login_simple.html quanto em /static/login_simple.html.
 app.use(express.static(path.join(__dirname, 'static')));
@@ -215,6 +231,7 @@ function initializeDatabase() {
         }
         const colNome = rows.find(col => col.name === 'nome');
         const colItem = rows.find(col => col.name === 'item');
+        const colCategoria = rows.find(col => col.name === 'categoria');
         if (colNome) {
             inventarioFamiliaNameColumn = 'nome';
             db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_inventario_familia_nome ON inventario_familia(nome)', (idxErr) => {
@@ -232,6 +249,28 @@ function initializeDatabase() {
         } else {
             inventarioFamiliaNameColumn = null;
             console.warn('A tabela inventario_familia não possui colunas "nome" nem "item". Operações de nome serão ignoradas.');
+        }
+        inventarioFamiliaHasCategoria = !!colCategoria;
+
+        // Garante que a coluna imagem exista na tabela inventario_familia
+        const colImagem = rows.find(col => col.name === 'imagem');
+        if (!colImagem) {
+            db.run('ALTER TABLE inventario_familia ADD COLUMN imagem TEXT', (altErr) => {
+                if (altErr) {
+                    console.warn('Não foi possível adicionar a coluna imagem em inventario_familia:', altErr.message);
+                } else {
+                    console.log('Coluna imagem adicionada à tabela inventario_familia');
+                }
+            });
+        }
+        // Também detecta subcategoria; se existir e for NOT NULL, vamos usar default 'Geral'
+        const colSubcategoria = rows.find(col => col.name === 'subcategoria');
+        if (colSubcategoria && colSubcategoria.notnull === 1) {
+            db.run("UPDATE inventario_familia SET subcategoria = COALESCE(subcategoria, 'Geral')", (updErr) => {
+                if (updErr) {
+                    console.warn('Falha ao definir default para subcategoria:', updErr.message);
+                }
+            });
         }
 
         // Após determinar a coluna, podemos fazer o seeding de itens de exemplo se
@@ -269,6 +308,35 @@ function initializeDatabase() {
     db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_membros_rg ON membros(rg)', (err) => {
         if (err) {
             console.error('Erro ao criar índice único em membros (RG):', err.message);
+        }
+    });
+
+    // Migração de colunas para a tabela rotas (compatibilidade com bancos antigos)
+    db.all('PRAGMA table_info(rotas)', (err, rotasCols) => {
+        if (err) {
+            console.warn('Falha ao inspecionar a tabela rotas:', err.message);
+            return;
+        }
+        const hasMembroNome = rotasCols.some(c => c.name === 'membro_nome');
+        const hasPagamento = rotasCols.some(c => c.name === 'pagamento');
+        const hasPagante = rotasCols.some(c => c.name === 'pagante_username');
+        const hasComprovante = rotasCols.some(c => c.name === 'comprovante_path');
+        const hasDataPagamento = rotasCols.some(c => c.name === 'data_pagamento');
+
+        if (!hasMembroNome) {
+            db.run('ALTER TABLE rotas ADD COLUMN membro_nome TEXT', (e) => e && console.warn('Erro ao adicionar coluna membro_nome em rotas:', e.message));
+        }
+        if (!hasPagamento) {
+            db.run('ALTER TABLE rotas ADD COLUMN pagamento REAL DEFAULT 0', (e) => e && console.warn('Erro ao adicionar coluna pagamento em rotas:', e.message));
+        }
+        if (!hasPagante) {
+            db.run('ALTER TABLE rotas ADD COLUMN pagante_username TEXT', (e) => e && console.warn('Erro ao adicionar coluna pagante_username em rotas:', e.message));
+        }
+        if (!hasComprovante) {
+            db.run('ALTER TABLE rotas ADD COLUMN comprovante_path TEXT', (e) => e && console.warn('Erro ao adicionar coluna comprovante_path em rotas:', e.message));
+        }
+        if (!hasDataPagamento) {
+            db.run('ALTER TABLE rotas ADD COLUMN data_pagamento DATETIME', (e) => e && console.warn('Erro ao adicionar coluna data_pagamento em rotas:', e.message));
         }
     });
 
@@ -349,9 +417,42 @@ function initializeDatabase() {
     db.run(`INSERT OR IGNORE INTO usuarios (username, password, role) VALUES (?, ?, ?)`,
            ['membro', hashedMembroPassword, 'membro']);
 
+    // Corrigir estoque negativo (se existir)
+    corrigirEstoqueNegativo();
+
     console.log('🚀 Servidor rodando na porta', PORT);
     console.log('📱 Acesse: http://localhost:' + PORT + '/static/login_simple.html');
     console.log('👤 Usuário: tofu | Senha: tofu$2025');
+}
+
+// Função para corrigir estoque negativo
+function corrigirEstoqueNegativo() {
+    console.log('🔍 Verificando e corrigindo estoque negativo...');
+    
+    db.all('SELECT id, tipo, nome, quantidade FROM estoque WHERE quantidade < 0', (err, rows) => {
+        if (err) {
+            console.error('Erro ao verificar estoque negativo:', err.message);
+            return;
+        }
+        
+        if (rows.length === 0) {
+            console.log('✅ Nenhum item com estoque negativo encontrado');
+            return;
+        }
+        
+        console.log(`⚠️  Encontrados ${rows.length} itens com estoque negativo, corrigindo...`);
+        
+        rows.forEach(row => {
+            console.log(`🔧 Corrigindo ${row.nome}: ${row.quantidade} → 0`);
+            db.run('UPDATE estoque SET quantidade = 0, data_atualizacao = CURRENT_TIMESTAMP WHERE id = ?', [row.id], (err) => {
+                if (err) {
+                    console.error(`❌ Erro ao corrigir ${row.nome}:`, err.message);
+                } else {
+                    console.log(`✅ ${row.nome} corrigido com sucesso`);
+                }
+            });
+        });
+    });
 }
 
 // Middleware de autenticação
@@ -423,7 +524,8 @@ function generateRotasParaProximaSemana() {
 }
 
 // Gerar rotas para a próxima semana na inicialização
-setTimeout(generateRotasParaProximaSemana, 1000);
+// COMENTADO: Estava criando rotas automaticamente na inicialização
+// setTimeout(generateRotasParaProximaSemana, 1000);
 
 // Rotas de autenticação
 app.post('/api/login', (req, res) => {
@@ -662,32 +764,17 @@ function verificarEncomendasProntas() {
                             (estoqueDisponivel['9mm'] || 0) >= req9 &&
                             (estoqueDisponivel['762mm'] || 0) >= req762 &&
                             (estoqueDisponivel['12cbc'] || 0) >= req12) {
-                            // Atualiza status para pronto
+                            // Atualiza status para pronto (sem baixar estoque)
                             await new Promise((resUpd, rejUpd) => {
                                 db.run('UPDATE encomendas SET status = ? WHERE id = ?', ['pronto', pedido.id], function(errUpd) {
                                     if (errUpd) {
                                         return rejUpd(errUpd);
                                     }
-                                    console.log(`🎉 Encomenda ${pedido.id} marcada como pronta.`);
+                                    console.log(`🎉 Encomenda ${pedido.id} marcada como pronta (estoque reservado logicamente).`);
                                     resUpd();
                                 });
                             });
-                            // Baixa a quantidade de munições do estoque
-                            try {
-                                await baixarEstoquePorEncomenda(req5, req9, req762, req12);
-                                console.log(`📦 Estoque atualizado para encomenda ${pedido.id}`);
-                            } catch (errBaixa) {
-                                console.error('Erro ao baixar estoque para encomenda pronta:', errBaixa);
-                                // Se não conseguir baixar, desfaz a mudança de status para evitar inconsistencia
-                                await new Promise((resRevert, rejRevert) => {
-                                    db.run('UPDATE encomendas SET status = ? WHERE id = ?', ['pendente', pedido.id], function(errRev) {
-                                        if (errRev) return rejRevert(errRev);
-                                        resRevert();
-                                    });
-                                });
-                                return reject(errBaixa);
-                            }
-                            // Atualiza estoque em memória
+                            // Atualiza estoque em memória para reserva lógica (sem baixar do banco)
                             estoqueDisponivel['5mm'] = (estoqueDisponivel['5mm'] || 0) - req5;
                             estoqueDisponivel['9mm'] = (estoqueDisponivel['9mm'] || 0) - req9;
                             estoqueDisponivel['762mm'] = (estoqueDisponivel['762mm'] || 0) - req762;
@@ -752,7 +839,7 @@ app.post('/api/limpar-duplicatas', authenticateToken, (req, res) => {
 });
 
 // Rotas de encomendas
-app.get('/api/encomendas', (req, res) => {
+app.get('/api/encomendas', authenticateToken, (req, res) => {
     db.all('SELECT * FROM encomendas ORDER BY data_criacao DESC', (err, rows) => {
         if (err) {
             return res.status(500).json({ error: err.message });
@@ -761,7 +848,7 @@ app.get('/api/encomendas', (req, res) => {
     });
 });
 
-app.post('/api/encomendas', async (req, res) => {
+app.post('/api/encomendas', authenticateToken, async (req, res) => {
     const { cliente, familia, telefone_cliente, municao_5mm, municao_9mm, municao_762mm, municao_12cbc, valor_total, comissao, usuario } = req.body;
 
     db.run(
@@ -783,7 +870,7 @@ app.post('/api/encomendas', async (req, res) => {
     );
 });
 
-app.put('/api/encomendas/:id', (req, res) => {
+app.put('/api/encomendas/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
     const { cliente, familia, telefone_cliente, municao_5mm, municao_9mm, municao_762mm, municao_12cbc, valor_total, comissao, status } = req.body;
 
@@ -903,36 +990,43 @@ app.put('/api/encomendas/:id', (req, res) => {
                 //    baixamos o estoque. Isso cobre status pendente ou cancelado -> entregue.
                 if (statusAnterior !== 'entregue' && status === 'entregue') {
                     if (statusAnterior === 'pronto') {
-                        // Estoque já foi baixado quando marcou como pronto, apenas ajusta se quantidades mudaram.
-                        const deltaQ5p = q5Novo - q5Anterior;
-                        const deltaQ9p = q9Novo - q9Anterior;
-                        const deltaQ762p = q762Novo - q762Anterior;
-                        const deltaQ12p = q12Novo - q12Anterior;
-                        if (deltaQ5p !== 0 || deltaQ9p !== 0 || deltaQ762p !== 0 || deltaQ12p !== 0) {
-                            const baixas = {
-                                q5: Math.max(0, deltaQ5p),
-                                q9: Math.max(0, deltaQ9p),
-                                q762: Math.max(0, deltaQ762p),
-                                q12: Math.max(0, deltaQ12p)
-                            };
-                            const devolucoes = {
-                                q5: Math.abs(Math.min(0, deltaQ5p)),
-                                q9: Math.abs(Math.min(0, deltaQ9p)),
-                                q762: Math.abs(Math.min(0, deltaQ762p)),
-                                q12: Math.abs(Math.min(0, deltaQ12p))
-                            };
-                            baixarEstoquePorEncomenda(baixas.q5, baixas.q9, baixas.q762, baixas.q12)
-                                .then(() => devolverEstoquePorEncomenda(devolucoes.q5, devolucoes.q9, devolucoes.q762, devolucoes.q12))
-                                .then(() => {
-                                    sendAndVerify({ message: 'Encomenda atualizada e estoque ajustado com sucesso' });
-                                })
-                                .catch(errAjuste => {
-                                    console.error('Erro ao ajustar estoque:', errAjuste);
-                                    sendAndVerify({ message: 'Encomenda atualizada, mas erro ao ajustar estoque' });
-                                });
-                        } else {
-                            sendAndVerify({ message: 'Encomenda atualizada com sucesso' });
-                        }
+                        // A encomenda estava pronta (estoque reservado logicamente) e agora foi entregue: baixar estoque efetivamente.
+                        // Primeiro baixa as quantidades anteriores, depois ajusta se houve mudanças.
+                        
+                        // Baixar estoque das quantidades anteriores (que estavam apenas reservadas)
+                        baixarEstoquePorEncomenda(q5Anterior, q9Anterior, q762Anterior, q12Anterior)
+                            .then(() => {
+                                // Depois ajustar se as quantidades mudaram
+                                const deltaQ5p = q5Novo - q5Anterior;
+                                const deltaQ9p = q9Novo - q9Anterior;
+                                const deltaQ762p = q762Novo - q762Anterior;
+                                const deltaQ12p = q12Novo - q12Anterior;
+                                
+                                if (deltaQ5p !== 0 || deltaQ9p !== 0 || deltaQ762p !== 0 || deltaQ12p !== 0) {
+                                    const baixas = {
+                                        q5: Math.max(0, deltaQ5p),
+                                        q9: Math.max(0, deltaQ9p),
+                                        q762: Math.max(0, deltaQ762p),
+                                        q12: Math.max(0, deltaQ12p)
+                                    };
+                                    const devolucoes = {
+                                        q5: Math.abs(Math.min(0, deltaQ5p)),
+                                        q9: Math.abs(Math.min(0, deltaQ9p)),
+                                        q762: Math.abs(Math.min(0, deltaQ762p)),
+                                        q12: Math.abs(Math.min(0, deltaQ12p))
+                                    };
+                                    return baixarEstoquePorEncomenda(baixas.q5, baixas.q9, baixas.q762, baixas.q12)
+                                        .then(() => devolverEstoquePorEncomenda(devolucoes.q5, devolucoes.q9, devolucoes.q762, devolucoes.q12));
+                                }
+                                return Promise.resolve();
+                            })
+                            .then(() => {
+                                sendAndVerify({ message: 'Encomenda entregue e estoque baixado com sucesso' });
+                            })
+                            .catch(errBaixar => {
+                                console.error('Erro ao baixar estoque:', errBaixar);
+                                sendAndVerify({ message: 'Encomenda atualizada, mas erro ao baixar estoque' });
+                            });
                     } else {
                         // Status anterior não era pronto nem entregue: baixar estoque para todas as quantidades
                         baixarEstoquePorEncomenda(q5Novo, q9Novo, q762Novo, q12Novo)
@@ -1019,7 +1113,7 @@ app.put('/api/encomendas/:id', (req, res) => {
     });
 });
 
-app.delete('/api/encomendas/:id', (req, res) => {
+app.delete('/api/encomendas/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
 
     // Primeiro, obtém os dados da encomenda para controle de estoque
@@ -1068,7 +1162,7 @@ app.delete('/api/encomendas/:id', (req, res) => {
 });
 
 // Rotas de estoque
-app.get('/api/estoque', (req, res) => {
+app.get('/api/estoque', authenticateToken, (req, res) => {
     // Consolida duplicatas somando quantidades por tipo e nome
     db.all('SELECT tipo, nome, SUM(quantidade) as quantidade, AVG(preco) as preco, MAX(data_atualizacao) as data_atualizacao FROM estoque GROUP BY tipo, nome ORDER BY tipo, nome', (err, rows) => {
         if (err) {
@@ -1078,16 +1172,10 @@ app.get('/api/estoque', (req, res) => {
     });
 });
 
-// Atualizar estoque adicionando materiais ou munições. Disponível apenas para administradores ou líderes.
-// Atualiza um item específico do estoque (quantidade). Apenas administradores, gerentes ou líderes podem editar o valor
+// Atualizar estoque (quantidade). Disponível para todos os usuários autenticados.
 app.put('/api/estoque/:tipo/:item', authenticateToken, (req, res) => {
     const { tipo, item } = req.params;
     const { quantidade } = req.body;
-    const role = req.user && req.user.role;
-
-    if (role !== 'admin' && role !== 'lider') {
-        return res.status(403).json({ error: 'Acesso negado' });
-    }
 
     db.run('UPDATE estoque SET quantidade = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE tipo = ? AND nome = ?', [quantidade, tipo, item], function (err) {
         if (err) {
@@ -1104,14 +1192,9 @@ app.put('/api/estoque/:tipo/:item', authenticateToken, (req, res) => {
     });
 });
 
-// Atualizar estoque adicionando materiais ou munições. Disponível apenas para administradores ou líderes.
+// Atualizar estoque adicionando materiais ou munições. Disponível para todos os usuários autenticados.
 app.post('/api/estoque/adicionar', authenticateToken, (req, res) => {
     const { tipo, item, quantidade, baixar_materiais } = req.body;
-    const role = req.user && req.user.role;
-
-    if (role !== 'admin' && role !== 'lider') {
-        return res.status(403).json({ error: 'Acesso negado' });
-    }
 
     if (tipo === 'material') {
         // Atualizar material
@@ -1255,15 +1338,12 @@ app.post('/api/estoque/adicionar', authenticateToken, (req, res) => {
     res.status(400).json({ error: 'Tipo inválido' });
 });
 
-// Rota para retirar itens do estoque
+// Rota para retirar itens do estoque - disponível para todos os usuários autenticados
 app.post('/api/estoque/retirar', authenticateToken, (req, res) => {
     const { tipo, item, quantidade, destinos } = req.body;
-    const role = req.user && req.user.role;
     const usuario = req.user && req.user.username;
 
-    if (role !== 'admin' && role !== 'lider') {
-        return res.status(403).json({ error: 'Acesso negado' });
-    }
+    console.log(`🔍 RETIRADA DE ESTOQUE - Tipo: ${tipo}, Item: ${item}, Quantidade: ${quantidade}, Usuário: ${usuario}`);
 
     const qtd = parseInt(quantidade) || 0;
     if (qtd <= 0) {
@@ -1277,23 +1357,42 @@ app.post('/api/estoque/retirar', authenticateToken, (req, res) => {
     } else if (typeof destinos === 'string') {
         destinosArray = destinos.split(',').map(s => s.trim()).filter(Boolean);
     }
-    // Verificar estoque disponível (soma duplicatas se existirem)
-    db.get('SELECT SUM(quantidade) as quantidade FROM estoque WHERE tipo = ? AND nome = ?', [tipo, item], (errSel, rowSel) => {
-        if (errSel) {
-            return res.status(500).json({ error: errSel.message });
-        }
-        if (!rowSel || (rowSel.quantidade || 0) < qtd) {
-            return res.status(400).json({ 
-                error: `Estoque insuficiente. Disponível: ${rowSel ? (rowSel.quantidade || 0) : 0}, Solicitado: ${qtd}` 
-            });
-        }
+            // Verificar estoque disponível (soma duplicatas se existirem)
+        db.get('SELECT SUM(quantidade) as quantidade FROM estoque WHERE tipo = ? AND nome = ?', [tipo, item], (errSel, rowSel) => {
+            if (errSel) {
+                return res.status(500).json({ error: errSel.message });
+            }
+            
+            const estoqueDisponivel = rowSel ? (rowSel.quantidade || 0) : 0;
+            
+            console.log(`📊 Estoque disponível para ${item}: ${estoqueDisponivel}, Quantidade solicitada: ${qtd}`);
+            
+            // Validação rigorosa: não permitir estoque negativo
+            if (estoqueDisponivel < qtd) {
+                console.log(`❌ Estoque insuficiente para ${item}`);
+                return res.status(400).json({ 
+                    error: `Estoque insuficiente. Disponível: ${estoqueDisponivel}, Solicitado: ${qtd}` 
+                });
+            }
+
+            // Verificar se a retirada resultaria em estoque negativo
+            if (estoqueDisponivel - qtd < 0) {
+                console.log(`❌ Retirada resultaria em estoque negativo para ${item}`);
+                return res.status(400).json({ 
+                    error: `Retirada resultaria em estoque negativo. Disponível: ${estoqueDisponivel}, Após retirada: ${estoqueDisponivel - qtd}` 
+                });
+            }
 
         // Retirar do estoque
+        console.log(`🔄 Executando UPDATE: quantidade = quantidade - ${qtd} WHERE tipo = ${tipo} AND nome = ${item}`);
         db.run('UPDATE estoque SET quantidade = quantidade - ?, data_atualizacao = CURRENT_TIMESTAMP WHERE tipo = ? AND nome = ?', 
                [qtd, tipo, item], function(errUpd) {
             if (errUpd) {
+                console.error(`❌ Erro no UPDATE:`, errUpd.message);
                 return res.status(500).json({ error: errUpd.message });
             }
+            
+            console.log(`✅ UPDATE executado com sucesso. Registros afetados: ${this.changes}`);
 
             // Registrar saída avulsa
             const destinoStr = destinosArray.length > 0 ? destinosArray.join(', ') : 'Não especificado';
@@ -1302,7 +1401,10 @@ app.post('/api/estoque/retirar', authenticateToken, (req, res) => {
                 if (errSaida) {
                     console.error('Erro ao registrar saída avulsa:', errSaida.message);
                 }
-                res.json({ message: 'Item retirado do estoque com sucesso' });
+                res.json({ 
+                    message: `Item retirado do estoque com sucesso. Estoque restante: ${estoqueDisponivel - qtd}`,
+                    estoque_restante: estoqueDisponivel - qtd
+                });
             });
         });
     });
@@ -1339,14 +1441,9 @@ app.put('/api/config/commission-rate', authenticateToken, (req, res) => {
     });
 });
 
-// Permite fabricar munições em lotes. Rota protegida: apenas administradores ou líderes.
+// Permite fabricar munições em lotes. Disponível para todos os usuários autenticados.
 app.post('/api/estoque/fabricar', authenticateToken, (req, res) => {
     const { tipo_municao, lotes } = req.body;
-    const role = req.user && req.user.role;
-
-    if (role !== 'admin' && role !== 'lider') {
-        return res.status(403).json({ error: 'Acesso negado' });
-    }
 
     const numLotes = parseInt(lotes) || 0;
     if (numLotes <= 0) {
@@ -1502,7 +1599,7 @@ app.delete('/api/membros/:id', (req, res) => {
 });
 
 // Rotas de rotas
-app.get('/api/rotas', (req, res) => {
+app.get('/api/rotas', authenticateToken, (req, res) => {
     db.all(`SELECT r.*, m.nome as membro_nome 
             FROM rotas r 
             LEFT JOIN membros m ON r.membro_id = m.id 
@@ -1514,24 +1611,106 @@ app.get('/api/rotas', (req, res) => {
     });
 });
 
-app.post('/api/rotas', (req, res) => {
+app.post('/api/rotas', authenticateToken, (req, res) => {
     const { membro_id, quantidade, data_entrega } = req.body;
+    const qtdRotas = quantidade || 1;
+    const membroId = parseInt(membro_id);
 
-    db.run('INSERT INTO rotas (membro_id, quantidade, data_entrega) VALUES (?, ?, ?)', [membro_id, quantidade || 1, data_entrega], function (err) {
-        if (err) {
-            if (err.message.includes('UNIQUE constraint failed')) {
-                return res.status(400).json({ error: 'Já existe uma rota para este membro nesta data' });
-            }
-            return res.status(500).json({ error: err.message });
+    // Validar dados de entrada
+    if (!membroId || isNaN(membroId)) {
+        return res.status(400).json({ error: 'ID do membro é obrigatório e deve ser um número válido' });
+    }
+    if (!data_entrega) {
+        return res.status(400).json({ error: 'Data de entrega é obrigatória' });
+    }
+
+    // Primeiro, buscar o nome do membro
+    db.get('SELECT nome FROM membros WHERE id = ?', [membroId], (errMembro, membro) => {
+        if (errMembro) {
+            return res.status(500).json({ error: errMembro.message });
         }
-        res.json({
-            message: 'Rota cadastrada com sucesso',
-            id: this.lastID
+        if (!membro) {
+            return res.status(404).json({ error: `Membro com ID ${membroId} não encontrado` });
+        }
+
+        // Calcular materiais necessários: 160 de cada material + 13 titânios por rota
+        const materiaisNecessarios = [
+            { nome: 'Alumínio', quantidade: 160 * qtdRotas },
+            { nome: 'Emb Plástica', quantidade: 160 * qtdRotas },
+            { nome: 'Cobre', quantidade: 160 * qtdRotas },
+            { nome: 'Ferro', quantidade: 160 * qtdRotas },
+            { nome: 'Titânio', quantidade: 13 * qtdRotas }
+        ];
+
+        // Verificar se há material suficiente
+        db.all('SELECT nome, SUM(quantidade) as quantidade FROM estoque WHERE tipo = "material" GROUP BY nome', (errMat, rows) => {
+            if (errMat) {
+                return res.status(500).json({ error: errMat.message });
+            }
+
+            const estoqueAtual = {};
+            rows.forEach(row => {
+                estoqueAtual[row.nome] = row.quantidade;
+            });
+
+            // Verificar se há material suficiente
+            const faltaMaterial = materiaisNecessarios.find(mat => 
+                (estoqueAtual[mat.nome] || 0) < mat.quantidade
+            );
+
+            if (faltaMaterial) {
+                return res.status(400).json({ 
+                    error: `Material insuficiente: ${faltaMaterial.nome}. Necessário: ${faltaMaterial.quantidade}, Disponível: ${estoqueAtual[faltaMaterial.nome] || 0}` 
+                });
+            }
+
+            // Criar a rota com status "entregue" e pagamento de R$ 16.000 por rota
+            const pagamentoTotal = 16000 * qtdRotas;
+            db.run('INSERT INTO rotas (membro_id, membro_nome, quantidade, data_entrega, status, pagamento) VALUES (?, ?, ?, ?, ?, ?)', 
+                   [membroId, membro.nome, qtdRotas, data_entrega, 'entregue', pagamentoTotal], function (err) {
+                if (err) {
+                    if (err.message.includes('UNIQUE constraint failed')) {
+                        return res.status(400).json({ error: 'Já existe uma rota para este membro nesta data' });
+                    }
+                    return res.status(500).json({ error: err.message });
+                }
+
+                // Adicionar materiais ao estoque (produção)
+                let materiaisProcessados = 0;
+                let erroMaterial = null;
+
+                materiaisNecessarios.forEach(material => {
+                    db.run('UPDATE estoque SET quantidade = quantidade + ?, data_atualizacao = CURRENT_TIMESTAMP WHERE tipo = "material" AND nome = ?', 
+                           [material.quantidade, material.nome], function(errUpdate) {
+                        materiaisProcessados++;
+                        
+                        if (errUpdate && !erroMaterial) {
+                            erroMaterial = errUpdate;
+                        }
+
+                        // Quando todos os materiais foram processados
+                        if (materiaisProcessados === materiaisNecessarios.length) {
+                            if (erroMaterial) {
+                                console.error('Erro ao adicionar material:', erroMaterial.message);
+                                return res.status(500).json({ 
+                                    error: 'Rota criada mas erro ao adicionar materiais: ' + erroMaterial.message 
+                                });
+                            }
+
+                            res.json({
+                                message: `Rota cadastrada com sucesso! Materiais adicionados ao estoque: ${materiaisNecessarios.map(m => `${m.quantidade} ${m.nome}`).join(', ')}`,
+                                id: this.lastID,
+                                pagamento: pagamentoTotal
+                            });
+                        }
+                    });
+                });
+            });
         });
     });
 });
 
-app.put('/api/rotas/:id', (req, res) => {
+app.put('/api/rotas/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
     const { quantidade, status } = req.body;
 
@@ -1539,30 +1718,69 @@ app.put('/api/rotas/:id', (req, res) => {
         return res.status(400).json({ error: 'Quantidade e status são obrigatórios' });
     }
 
-    // Recupera status anterior da rota para evitar atualização duplicada de estoque
-    db.get('SELECT status FROM rotas WHERE id = ?', [id], (errSelect, row) => {
+    // Recupera dados anteriores da rota para controle de estoque
+    db.get('SELECT status, quantidade FROM rotas WHERE id = ?', [id], (errSelect, row) => {
         if (errSelect) {
             return res.status(500).json({ error: errSelect.message });
         }
         if (!row) {
             return res.status(404).json({ error: 'Rota não encontrada' });
         }
+        
         const statusAnterior = row.status;
-        // Atualiza apenas quantidade e status. O pagamento deve ser lançado manualmente por rota entregue.
+        const quantidadeAnterior = row.quantidade;
+        
+        // Atualiza a rota
         db.run('UPDATE rotas SET quantidade = ?, status = ? WHERE id = ?', [quantidade, status, id], function (err) {
             if (err) {
                 return res.status(500).json({ error: err.message });
             }
-            // Se a rota foi marcada como entregue agora e antes não era, incrementa estoque proporcional à quantidade
-            if (status === 'entregue' && statusAnterior !== 'entregue') {
-                const qtdEntrega = parseFloat(quantidade) || 1;
-                adicionarMateriaisPorRota(qtdEntrega).then(() => {
-                    res.json({ message: 'Rota atualizada com sucesso' });
+
+            // Controle de estoque baseado em mudanças de status
+            // Se a rota estava entregue e agora foi cancelada, remover materiais do estoque
+            if (statusAnterior === 'entregue' && status === 'cancelada') {
+                removerMateriaisPorRota(quantidadeAnterior).then(() => {
+                    res.json({ 
+                        message: `Rota cancelada e materiais removidos do estoque (${160 * quantidadeAnterior} de cada material + ${13 * quantidadeAnterior} titânio)` 
+                    });
                 }).catch(errStock => {
-                    console.error('Erro ao atualizar estoque após entrega de rota:', errStock);
-                    res.json({ message: 'Rota atualizada com sucesso (erro ao atualizar estoque)' });
+                    console.error('Erro ao remover materiais após cancelamento:', errStock);
+                    res.json({ message: 'Rota cancelada, mas erro ao remover materiais do estoque' });
                 });
-            } else {
+            } 
+            // Se mudou de cancelada para entregue, adicionar materiais ao estoque novamente
+            else if (statusAnterior === 'cancelada' && status === 'entregue') {
+                adicionarMateriaisPorRota(quantidade).then(() => {
+                    res.json({ 
+                        message: `Rota reativada e materiais adicionados ao estoque (${160 * quantidade} de cada material + ${13 * quantidade} titânio)` 
+                    });
+                }).catch(errStock => {
+                    console.error('Erro ao adicionar materiais após reativação:', errStock);
+                    res.json({ message: 'Rota reativada, mas erro ao adicionar materiais ao estoque' });
+                });
+            }
+            // Se mudou apenas a quantidade mas continua entregue, ajustar estoque
+            else if (statusAnterior === 'entregue' && status === 'entregue' && quantidade !== quantidadeAnterior) {
+                const diferenca = quantidade - quantidadeAnterior;
+                if (diferenca > 0) {
+                    // Aumentou quantidade: adicionar mais materiais
+                    adicionarMateriaisPorRota(diferenca).then(() => {
+                        res.json({ message: `Quantidade aumentada e materiais adicionais adicionados ao estoque` });
+                    }).catch(errStock => {
+                        console.error('Erro ao adicionar materiais adicionais:', errStock);
+                        res.json({ message: 'Quantidade atualizada, mas erro ao adicionar materiais adicionais' });
+                    });
+                } else {
+                    // Diminuiu quantidade: remover materiais excedentes
+                    removerMateriaisPorRota(Math.abs(diferenca)).then(() => {
+                        res.json({ message: `Quantidade reduzida e materiais excedentes removidos do estoque` });
+                    }).catch(errStock => {
+                        console.error('Erro ao remover materiais excedentes:', errStock);
+                        res.json({ message: 'Quantidade atualizada, mas erro ao remover materiais excedentes' });
+                    });
+                }
+            }
+            else {
                 res.json({ message: 'Rota atualizada com sucesso' });
             }
         });
@@ -1570,8 +1788,66 @@ app.put('/api/rotas/:id', (req, res) => {
 });
 
 /**
- * Incrementa o estoque de matérias-primas em virtude de uma rota concluída.
- * Para cada rota entregue, adiciona 160 unidades de Alumínio, Cobre, Emb Plástica e Ferro,
+ * Remove materiais do estoque quando uma rota é cancelada ou excluída.
+ * Para cada rota cancelada, remove 160 unidades de Alumínio, Cobre, Emb Plástica e Ferro,
+ * e 13 unidades de Titânio. Retorna uma Promise para permitir encadeamento.
+ */
+function removerMateriaisPorRota(qtd) {
+    return new Promise((resolve, reject) => {
+        const quantidadeRota = parseFloat(qtd) || 1;
+        const updates = [
+            { nome: 'Alumínio', quantidade: 160 * quantidadeRota },
+            { nome: 'Cobre', quantidade: 160 * quantidadeRota },
+            { nome: 'Emb Plástica', quantidade: 160 * quantidadeRota },
+            { nome: 'Ferro', quantidade: 160 * quantidadeRota },
+            { nome: 'Titânio', quantidade: 13 * quantidadeRota }
+        ];
+        let pending = updates.length;
+        let hasError = false;
+        
+        updates.forEach(item => {
+            // Primeiro verificar o estoque atual, depois atualizar limitando a 0
+            db.get('SELECT quantidade FROM estoque WHERE tipo = "material" AND nome = ?', [item.nome], (errSelect, row) => {
+                if (errSelect) {
+                    console.error('Erro ao verificar estoque de', item.nome, ':', errSelect.message);
+                    hasError = true;
+                    pending--;
+                    if (pending === 0) {
+                        if (hasError) {
+                            reject(new Error('Erro ao remover alguns materiais'));
+                        } else {
+                            resolve();
+                        }
+                    }
+                    return;
+                }
+                
+                const estoqueAtual = row ? (row.quantidade || 0) : 0;
+                const novaQuantidade = Math.max(0, estoqueAtual - item.quantidade);
+                
+                db.run('UPDATE estoque SET quantidade = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE tipo = "material" AND nome = ?', 
+                       [novaQuantidade, item.nome], function(errUpdate) {
+                    if (errUpdate) {
+                        console.error('Erro ao remover material:', item.nome, errUpdate.message);
+                        hasError = true;
+                    }
+                    pending--;
+                    if (pending === 0) {
+                        if (hasError) {
+                            reject(new Error('Erro ao remover alguns materiais'));
+                        } else {
+                            resolve();
+                        }
+                    }
+                });
+            });
+        });
+    });
+}
+
+/**
+ * Adiciona materiais ao estoque quando uma rota é criada (produção).
+ * Para cada rota, adiciona 160 unidades de Alumínio, Cobre, Emb Plástica e Ferro,
  * e 13 unidades de Titânio. Retorna uma Promise para permitir encadeamento.
  */
 function adicionarMateriaisPorRota(qtd) {
@@ -1585,31 +1861,71 @@ function adicionarMateriaisPorRota(qtd) {
             { nome: 'Titânio', quantidade: 13 * quantidadeRota }
         ];
         let pending = updates.length;
+        let hasError = false;
+        
         updates.forEach(item => {
-            db.run('UPDATE estoque SET quantidade = quantidade + ? WHERE tipo = "material" AND nome = ?', [item.quantidade, item.nome], function(err) {
+            db.run('UPDATE estoque SET quantidade = quantidade + ?, data_atualizacao = CURRENT_TIMESTAMP WHERE tipo = "material" AND nome = ?', 
+                   [item.quantidade, item.nome], function(err) {
                 if (err) {
-                    console.error('Erro ao atualizar material:', item.nome, err.message);
+                    console.error('Erro ao adicionar material:', item.nome, err.message);
+                    hasError = true;
                 }
                 pending--;
                 if (pending === 0) {
-                    resolve();
+                    if (hasError) {
+                        reject(new Error('Erro ao adicionar alguns materiais'));
+                    } else {
+                        resolve();
+                    }
                 }
             });
         });
     });
 }
 
-app.delete('/api/rotas/:id', (req, res) => {
+app.delete('/api/rotas/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
 
-    db.run('DELETE FROM rotas WHERE id = ?', [id], function (err) {
-        if (err) {
-            return res.status(500).json({ error: err.message });
+    // Primeiro, verificar se a rota existe e recuperar dados para controle de estoque
+    db.get('SELECT status, quantidade FROM rotas WHERE id = ?', [id], (errSelect, rota) => {
+        if (errSelect) {
+            return res.status(500).json({ error: errSelect.message });
         }
-        if (this.changes === 0) {
+        if (!rota) {
             return res.status(404).json({ error: 'Rota não encontrada' });
         }
-        res.json({ message: 'Rota excluída com sucesso' });
+
+        // Se a rota estava entregue, remover materiais do estoque
+        if (rota.status === 'entregue') {
+            removerMateriaisPorRota(rota.quantidade).then(() => {
+                // Agora excluir a rota
+                db.run('DELETE FROM rotas WHERE id = ?', [id], function (err) {
+                    if (err) {
+                        return res.status(500).json({ error: err.message });
+                    }
+                    if (this.changes === 0) {
+                        return res.status(404).json({ error: 'Rota não encontrada' });
+                    }
+                    res.json({ 
+                        message: `Rota excluída com sucesso. Materiais removidos do estoque: ${160 * rota.quantidade} de cada material + ${13 * rota.quantidade} titânio` 
+                    });
+                });
+            }).catch(errStock => {
+                console.error('Erro ao remover materiais após exclusão:', errStock);
+                res.status(500).json({ error: 'Erro ao remover materiais do estoque' });
+            });
+        } else {
+            // Se não estava entregue, apenas excluir
+            db.run('DELETE FROM rotas WHERE id = ?', [id], function (err) {
+                if (err) {
+                    return res.status(500).json({ error: err.message });
+                }
+                if (this.changes === 0) {
+                    return res.status(404).json({ error: 'Rota não encontrada' });
+                }
+                res.json({ message: 'Rota excluída com sucesso' });
+            });
+        }
     });
 });
 
@@ -1655,7 +1971,7 @@ app.delete('/api/familias/:id', (req, res) => {
 });
 
 // Rotas de inventário família
-app.get('/api/inventario-familia', (req, res) => {
+app.get('/api/inventario-familia', authenticateToken, (req, res) => {
     // Seleciona os itens do inventário família ordenados pelo nome, se existir.
     const orderBy = inventarioFamiliaNameColumn ? `ORDER BY ${inventarioFamiliaNameColumn}` : 'ORDER BY id';
     const query = `SELECT * FROM inventario_familia ${orderBy}`;
@@ -1678,62 +1994,163 @@ app.get('/api/inventario-familia', (req, res) => {
     });
 });
 
-app.post('/api/inventario-familia', (req, res) => {
-    const { nome, quantidade, preco, imagem } = req.body;
+app.post('/api/inventario-familia', authenticateToken, (req, res) => {
+    const { nome, item, categoria, subcategoria, quantidade, preco, imagem } = req.body;
+    
+    // Validação dos dados de entrada
+    if (!categoria || !item || typeof quantidade !== 'number' || quantidade < 0) {
+        return res.status(400).json({ error: 'Dados inválidos: categoria, item e quantidade são obrigatórios' });
+    }
+    
+    // Log para debug
+    console.log('🔍 POST /inventario-familia:', { nome, item, categoria, quantidade, preco, imagem });
+    console.log('🔍 inventarioFamiliaNameColumn:', inventarioFamiliaNameColumn);
+    
     // Prepara consulta de inserção dependendo da coluna de nome disponível
     let query;
     let values;
+    const nomeValor = nome !== undefined && nome !== null ? nome : item;
+    
     if (inventarioFamiliaNameColumn) {
-        query = `INSERT INTO inventario_familia (${inventarioFamiliaNameColumn}, quantidade, preco, imagem) VALUES (?, ?, ?, ?)`;
-        values = [nome, quantidade || 0, preco || 0, imagem];
+        if (inventarioFamiliaHasCategoria) {
+            // Se existir subcategoria na tabela, tenta preencher também
+            db.all('PRAGMA table_info(inventario_familia)', (e2, cols2) => {
+                const hasSub = !e2 && cols2 && cols2.find(c => c.name === 'subcategoria');
+                if (hasSub) {
+                    query = `INSERT INTO inventario_familia (${inventarioFamiliaNameColumn}, quantidade, preco, imagem, categoria, subcategoria) VALUES (?, ?, ?, ?, ?, ?)`;
+                    values = [nomeValor, quantidade || 0, preco || 0, imagem, categoria || 'Geral', subcategoria || 'Geral'];
+                } else {
+                    query = `INSERT INTO inventario_familia (${inventarioFamiliaNameColumn}, quantidade, preco, imagem, categoria) VALUES (?, ?, ?, ?, ?)`;
+                    values = [nomeValor, quantidade || 0, preco || 0, imagem, categoria || 'Geral'];
+                }
+                console.log('🔍 Query com subcategoria:', query, values);
+                proceedInsert();
+            });
+            return;
+        } else {
+            query = `INSERT INTO inventario_familia (${inventarioFamiliaNameColumn}, quantidade, preco, imagem) VALUES (?, ?, ?, ?)`;
+            values = [nomeValor, quantidade || 0, preco || 0, imagem];
+        }
     } else {
         // Não há coluna de nome: inserimos apenas quantidade, preco, imagem
-        query = 'INSERT INTO inventario_familia (quantidade, preco, imagem) VALUES (?, ?, ?)';
-        values = [quantidade || 0, preco || 0, imagem];
+        if (inventarioFamiliaHasCategoria) {
+            db.all('PRAGMA table_info(inventario_familia)', (e2, cols2) => {
+                const hasSub = !e2 && cols2 && cols2.find(c => c.name === 'subcategoria');
+                if (hasSub) {
+                    query = 'INSERT INTO inventario_familia (quantidade, preco, imagem, categoria, subcategoria) VALUES (?, ?, ?, ?, ?)';
+                    values = [quantidade || 0, preco || 0, imagem, categoria || 'Geral', subcategoria || 'Geral'];
+                } else {
+                    query = 'INSERT INTO inventario_familia (quantidade, preco, imagem, categoria) VALUES (?, ?, ?, ?)';
+                    values = [quantidade || 0, preco || 0, imagem, categoria || 'Geral'];
+                }
+                console.log('🔍 Query sem nome:', query, values);
+                proceedInsert();
+            });
+            return;
+        } else {
+            query = 'INSERT INTO inventario_familia (quantidade, preco, imagem) VALUES (?, ?, ?, ?)';
+            values = [quantidade || 0, preco || 0, imagem];
+        }
     }
-    db.run(query, values, function (err) {
-        if (err) {
-            if (err.message && err.message.includes('UNIQUE constraint failed')) {
-                return res.status(400).json({ error: 'Item já cadastrado' });
+    
+    console.log('🔍 Query final:', query, values);
+    proceedInsert();
+
+    function proceedInsert() {
+        console.log('🔍 Executando query:', query);
+        console.log('🔍 Com valores:', values);
+        
+        db.run(query, values, function (err) {
+            if (err) {
+                console.error('❌ Erro na inserção:', err.message);
+                if (err.message && err.message.includes('UNIQUE constraint failed')) {
+                    return res.status(400).json({ error: 'Item já cadastrado' });
+                }
+                return res.status(500).json({ error: err.message });
             }
+            
+            console.log('✅ Item inserido com sucesso, ID:', this.lastID);
+            res.json({
+                message: 'Item adicionado ao inventário com sucesso',
+                id: this.lastID
+            });
+        });
+    }
+});
+
+app.put('/api/inventario-familia/:id', authenticateToken, (req, res) => {
+    const { id } = req.params;
+    const { nome, item, categoria, quantidade, preco, imagem } = req.body;
+
+    console.log('🔍 PUT /inventario-familia:', { id, nome, item, categoria, quantidade, preco, imagem });
+
+    // Primeiro, buscar o item atual para preservar dados existentes
+    db.get(`SELECT * FROM inventario_familia WHERE id = ?`, [id], (err, itemAtual) => {
+        if (err) {
             return res.status(500).json({ error: err.message });
         }
-        res.json({
-            message: 'Item adicionado ao inventário com sucesso',
-            id: this.lastID
+        if (!itemAtual) {
+            return res.status(404).json({ error: 'Item não encontrado' });
+        }
+
+        console.log('🔍 Item atual:', itemAtual);
+
+        // Usar valores existentes se não fornecidos, preservando dados
+        const nomeValor = nome !== undefined && nome !== null ? nome : 
+                         (item !== undefined && item !== null ? item : 
+                         (inventarioFamiliaNameColumn ? itemAtual[inventarioFamiliaNameColumn] : null));
+        
+        const quantidadeValor = quantidade !== undefined ? quantidade : itemAtual.quantidade;
+        const precoValor = preco !== undefined ? preco : itemAtual.preco;
+        const imagemValor = imagem !== undefined ? imagem : itemAtual.imagem;
+        const categoriaValor = categoria !== undefined ? categoria : itemAtual.categoria;
+
+        console.log('🔍 Valores para atualização:', { nomeValor, quantidadeValor, precoValor, imagemValor, categoriaValor });
+
+        // Monta consulta de atualização dependendo da coluna de nome disponível
+        let updateQuery;
+        let params;
+        
+        if (inventarioFamiliaNameColumn) {
+            if (inventarioFamiliaHasCategoria) {
+                updateQuery = `UPDATE inventario_familia SET ${inventarioFamiliaNameColumn} = ?, quantidade = ?, preco = ?, imagem = ?, categoria = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE id = ?`;
+                params = [nomeValor, quantidadeValor, precoValor, imagemValor, categoriaValor, id];
+            } else {
+                updateQuery = `UPDATE inventario_familia SET ${inventarioFamiliaNameColumn} = ?, quantidade = ?, preco = ?, imagem = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE id = ?`;
+                params = [nomeValor, quantidadeValor, precoValor, imagemValor, id];
+            }
+        } else {
+            if (inventarioFamiliaHasCategoria) {
+                updateQuery = 'UPDATE inventario_familia SET quantidade = ?, preco = ?, imagem = ?, categoria = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE id = ?';
+                params = [quantidadeValor, precoValor, imagemValor, categoriaValor, id];
+            } else {
+                updateQuery = 'UPDATE inventario_familia SET quantidade = ?, preco = ?, imagem = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE id = ?';
+                params = [quantidadeValor, precoValor, imagemValor, id];
+            }
+        }
+
+        console.log('🔍 Query de atualização:', updateQuery);
+        console.log('🔍 Parâmetros:', params);
+
+        db.run(updateQuery, params, function (err) {
+            if (err) {
+                console.error('❌ Erro na atualização:', err.message);
+                if (err.message && err.message.includes('UNIQUE constraint failed')) {
+                    return res.status(400).json({ error: 'Nome já existe para outro item' });
+                }
+                return res.status(500).json({ error: err.message });
+            }
+            if (this.changes === 0) {
+                return res.status(404).json({ error: 'Item não encontrado' });
+            }
+            
+            console.log('✅ Item atualizado com sucesso');
+            res.json({ message: 'Item atualizado com sucesso' });
         });
     });
 });
 
-app.put('/api/inventario-familia/:id', (req, res) => {
-    const { id } = req.params;
-    const { nome, quantidade, preco, imagem } = req.body;
-
-    // Monta consulta de atualização dependendo da coluna de nome disponível
-    let updateQuery;
-    let params;
-    if (inventarioFamiliaNameColumn) {
-        updateQuery = `UPDATE inventario_familia SET ${inventarioFamiliaNameColumn} = ?, quantidade = ?, preco = ?, imagem = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE id = ?`;
-        params = [nome, quantidade, preco, imagem, id];
-    } else {
-        updateQuery = 'UPDATE inventario_familia SET quantidade = ?, preco = ?, imagem = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE id = ?';
-        params = [quantidade, preco, imagem, id];
-    }
-    db.run(updateQuery, params, function (err) {
-        if (err) {
-            if (err.message && err.message.includes('UNIQUE constraint failed')) {
-                return res.status(400).json({ error: 'Nome já existe para outro item' });
-            }
-            return res.status(500).json({ error: err.message });
-        }
-        if (this.changes === 0) {
-            return res.status(404).json({ error: 'Item não encontrado' });
-        }
-        res.json({ message: 'Item atualizado com sucesso' });
-    });
-});
-
-app.delete('/api/inventario-familia/:id', (req, res) => {
+app.delete('/api/inventario-familia/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
 
     db.run('DELETE FROM inventario_familia WHERE id = ?', [id], function (err) {
@@ -1755,7 +2172,7 @@ app.get('/api/requisicoes-familia', (req, res) => {
     const query = `SELECT r.*, ${nomeCol}, i.preco as item_preco 
                    FROM requisicoes_familia r 
                    LEFT JOIN inventario_familia i ON r.item_id = i.id 
-                   ORDER BY r.data_requisicao DESC`;
+                   ORDER BY r.data_solicitacao DESC`;
     db.all(query, (err, rows) => {
         if (err) {
             return res.status(500).json({ error: err.message });
@@ -1989,4 +2406,146 @@ app.get('/api/relatorios/rotas', (req, res) => {
 app.listen(PORT, () => {
     console.log(`Servidor rodando na porta ${PORT}`);
 });
+
+// Endpoint para registrar pagamento de rota
+app.put('/api/rotas/:id/pagamento', authenticateToken, (req, res) => {
+    const { id } = req.params;
+    const { pagante_id } = req.body;
+
+    if (!pagante_id) {
+        return res.status(400).json({ error: 'ID do pagante é obrigatório' });
+    }
+
+    // Verificar se a rota existe e está entregue
+    db.get('SELECT * FROM rotas WHERE id = ?', [id], (err, rota) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        if (!rota) {
+            return res.status(404).json({ error: 'Rota não encontrada' });
+        }
+        if (rota.status !== 'entregue') {
+            return res.status(400).json({ error: 'Só é possível registrar pagamento para rotas entregues' });
+        }
+
+        // Verificar se o usuário pagante existe e é líder ou admin
+        db.get('SELECT username, role FROM usuarios WHERE id = ?', [pagante_id], (errUser, usuario) => {
+            if (errUser) {
+                return res.status(500).json({ error: errUser.message });
+            }
+            if (!usuario) {
+                return res.status(404).json({ error: 'Usuário pagante não encontrado' });
+            }
+            if (usuario.role !== 'lider' && usuario.role !== 'admin') {
+                return res.status(403).json({ error: 'Apenas líderes e administradores podem registrar pagamentos' });
+            }
+
+            // Registrar o pagamento
+            const dataPagamento = new Date().toISOString();
+            db.run('UPDATE rotas SET pagante_username = ?, data_pagamento = ? WHERE id = ?', 
+                   [usuario.username, dataPagamento, id], function(err) {
+                if (err) {
+                    return res.status(500).json({ error: err.message });
+                }
+                
+                res.json({ 
+                    message: 'Pagamento registrado com sucesso',
+                    pagante: usuario.username,
+                    data_pagamento: dataPagamento
+                });
+            });
+        });
+    });
+});
+
+// Endpoint para registrar histórico do inventário família
+app.post('/api/historico-inventario-familia', authenticateToken, (req, res) => {
+    const { item_id, tipo_operacao, quantidade, usuario, motivo } = req.body;
+
+    if (!item_id || !tipo_operacao || !quantidade || !usuario) {
+        return res.status(400).json({ error: 'Todos os campos obrigatórios devem ser preenchidos' });
+    }
+
+    // Verificar se o item existe
+    db.get('SELECT id FROM inventario_familia WHERE id = ?', [item_id], (err, item) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        if (!item) {
+            return res.status(404).json({ error: 'Item não encontrado' });
+        }
+
+        // Inserir no histórico
+        db.run('INSERT INTO historico_inventario_familia (item_id, tipo_operacao, quantidade, usuario, data_operacao) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)', 
+               [item_id, tipo_operacao, quantidade, usuario], function(err) {
+            if (err) {
+                return res.status(500).json({ error: err.message });
+            }
+            
+            res.json({ 
+                message: 'Histórico registrado com sucesso',
+                id: this.lastID
+            });
+        });
+    });
+});
+
+// Endpoint para listar usuários (apenas para administradores)
+app.get('/api/usuarios', authenticateToken, (req, res) => {
+    // Verificar se o usuário é administrador
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Acesso negado. Apenas administradores podem listar usuários.' });
+    }
+
+    db.all('SELECT id, username, role FROM usuarios ORDER BY username', (err, rows) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json(rows);
+    });
+});
+
+// Endpoint para excluir item específico do inventário família
+app.delete('/api/inventario-familia/item/:nome', authenticateToken, (req, res) => {
+    const { nome } = req.params;
+    
+    // Verificar se o usuário é administrador ou líder
+    if (req.user.role !== 'admin' && req.user.role !== 'lider') {
+        return res.status(403).json({ error: 'Acesso negado. Apenas administradores e líderes podem excluir itens.' });
+    }
+
+    console.log(`🗑️ Tentando excluir item: ${nome}`);
+
+    // Construir a query de exclusão baseada na coluna de nome disponível
+    let deleteQuery;
+    let deleteParams;
+    
+    if (inventarioFamiliaNameColumn) {
+        deleteQuery = `DELETE FROM inventario_familia WHERE ${inventarioFamiliaNameColumn} = ?`;
+        deleteParams = [nome];
+    } else {
+        // Se não há coluna de nome, não é possível excluir por nome
+        return res.status(400).json({ error: 'Não é possível excluir itens por nome nesta versão do banco' });
+    }
+
+    db.run(deleteQuery, deleteParams, function (err) {
+        if (err) {
+            console.error(`❌ Erro ao excluir item ${nome}:`, err.message);
+            return res.status(500).json({ error: err.message });
+        }
+        
+        if (this.changes === 0) {
+            console.log(`ℹ️ Item ${nome} não encontrado para exclusão`);
+            return res.status(404).json({ error: 'Item não encontrado' });
+        }
+        
+        console.log(`✅ Item ${nome} excluído com sucesso`);
+        res.json({ 
+            message: `Item ${nome} excluído com sucesso`,
+            itens_removidos: this.changes
+        });
+    });
+});
+
+
 

@@ -1748,17 +1748,30 @@
     <div id="pagamentoModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h3 class="modal-title">Lançar Pagamento</h3>
+                <h3 class="modal-title">Registrar Pagamento da Rota</h3>
                 <button class="close-btn" onclick="closeModal('pagamentoModal')">&times;</button>
             </div>
             <form id="pagamentoForm">
                 <!-- Guarda o id da rota para a qual o pagamento será lançado -->
                 <input type="hidden" id="pagamentoRotaId">
                 <div class="form-group">
-                    <label>Líder responsável</label>
-                    <select id="pagamentoLiderSelect" required></select>
+                    <label>Líder/Administrador responsável pelo pagamento</label>
+                    <select id="pagamentoLiderSelect" required>
+                        <option value="">Selecione um líder...</option>
+                    </select>
                 </div>
-                <button type="submit" class="btn-primary">Confirmar Pagamento</button>
+                <div class="form-group">
+                    <label>Data e Hora do Pagamento</label>
+                    <input type="datetime-local" id="pagamentoDataHora" required>
+                </div>
+                <div class="form-group">
+                    <label>Observações (opcional)</label>
+                    <textarea id="pagamentoObservacoes" rows="3" placeholder="Observações sobre o pagamento..."></textarea>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn-secondary" onclick="closeModal('pagamentoModal')">Cancelar</button>
+                    <button type="submit" class="btn-primary">Confirmar Pagamento</button>
+                </div>
             </form>
         </div>
     </div>
@@ -2466,15 +2479,12 @@ let editingEncomendaId = null;
             const select = document.getElementById('rotaMembro');
             select.innerHTML = '<option value="">Selecione um membro...</option>';
             
-            // Apenas membros com cargo "membro" devem aparecer na lista para rotas manuais
+            // Todos os cargos podem ser selecionados para apontar uma rota
             membros.forEach(membro => {
-                const cargo = membro.cargo || 'membro';
-                if (cargo === 'membro') {
-                    const option = document.createElement('option');
-                    option.value = membro.id;
-                    option.textContent = membro.nome;
-                    select.appendChild(option);
-                }
+                const option = document.createElement('option');
+                option.value = membro.id;
+                option.textContent = membro.nome;
+                select.appendChild(option);
             });
         }
 
@@ -2509,7 +2519,12 @@ let editingEncomendaId = null;
                 document.getElementById('rotasLoading').style.display = 'block';
                 document.getElementById('rotasTable').style.display = 'none';
 
-                const response = await fetch(`${API_BASE}/rotas`);
+                const tokenRotas = localStorage.getItem('authToken');
+                const response = await fetch(`${API_BASE}/rotas`, {
+                    headers: {
+                        'Authorization': tokenRotas ? `Bearer ${tokenRotas}` : ''
+                    }
+                });
                 const data = await response.json();
 
                 if (response.ok) {
@@ -2532,6 +2547,10 @@ let editingEncomendaId = null;
             const tbody = document.getElementById('rotasTableBody');
             tbody.innerHTML = '';
 
+            // Debug: log para verificar o usuário atual
+            console.log('Usuário atual:', currentUser);
+            console.log('Role do usuário:', currentUser ? currentUser.role : 'N/A');
+
             rotas.forEach(rota => {
                 const row = document.createElement('tr');
                 // Construir ações dinamicamente com base no status e no papel do usuário
@@ -2543,12 +2562,16 @@ let editingEncomendaId = null;
                     }
                 }
                 if (rota.status === 'entregue') {
+                    // Debug: log para verificar os valores
+                    console.log('Rota entregue:', rota.id, 'Pagamento:', rota.pagamento, 'Pagante:', rota.pagante_username);
+                    console.log('Usuário atual role:', currentUser ? currentUser.role : 'N/A');
+                    
                     // Se o pagamento ainda não foi efetuado, exibe botão para lançar pagamento
-                    if (!rota.pagamento || rota.pagamento === 0) {
-                        if (currentUser && (currentUser.role === 'admin' || currentUser.role === 'lider')) {
-                            acoesHTML += `<button class="btn-primary" style="background: #27ae60; padding: 6px 12px; font-size: 12px; margin-right: 5px;" onclick="openPagamentoModal(${rota.id})">Pagar</button>`;
-                        }
+                    // Simplificando a condição para debug
+                    if (currentUser && (currentUser.role === 'admin' || currentUser.role === 'lider')) {
+                        acoesHTML += `<button class="btn-primary" style="background: #27ae60; padding: 6px 12px; font-size: 12px; margin-right: 5px;" onclick="openPagamentoModal(${rota.id})">Pagar</button>`;
                     }
+                    
                     // Botão para visualizar comprovante somente se houver caminho
                     if (rota.comprovante_path) {
                         acoesHTML += `<button class="btn-secondary" style="background: #8e44ad; padding: 6px 12px; font-size: 12px; margin-right: 5px;" onclick="verComprovante(${rota.id})">Ver Comprovante</button>`;
@@ -2583,9 +2606,13 @@ let editingEncomendaId = null;
                 return;
             }
             try {
+                const tokenLancar = localStorage.getItem('authToken');
                 const response = await fetch(`${API_BASE}/rotas/${id}`, {
                     method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': tokenLancar ? `Bearer ${tokenLancar}` : ''
+                    },
                     body: JSON.stringify({ quantidade, status: 'entregue' })
                 });
                 const data = await response.json();
@@ -2738,7 +2765,12 @@ let editingEncomendaId = null;
                     console.warn('Erro na verificação automática:', e);
                 }
 
-                const response = await fetch(`${API_BASE}/encomendas`);
+                const tokenEncom = localStorage.getItem('authToken');
+                const response = await fetch(`${API_BASE}/encomendas`, {
+                    headers: {
+                        'Authorization': tokenEncom ? `Bearer ${tokenEncom}` : ''
+                    }
+                });
                 console.log('Response status:', response.status);
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
@@ -3226,7 +3258,12 @@ let editingEncomendaId = null;
                 document.getElementById('estoqueLoading').style.display = 'block';
                 document.getElementById('estoqueContent').style.display = 'none';
 
-                const response = await fetch(`${API_BASE}/estoque`);
+                const tokenEstoque = localStorage.getItem('authToken');
+                const response = await fetch(`${API_BASE}/estoque`, {
+                    headers: {
+                        'Authorization': tokenEstoque ? `Bearer ${tokenEstoque}` : ''
+                    }
+                });
                 const data = await response.json();
 
                 if (response.ok) {
@@ -3396,11 +3433,26 @@ let editingEncomendaId = null;
                     ev.preventDefault();
                     const tipo = document.getElementById('retiradaTipo').value;
                     const item = document.getElementById('retiradaItem').value;
-                    const quantidade = document.getElementById('retiradaQuantidade').value;
-                    if (!tipo || !item || !quantidade) {
-                        alert('Preencha todos os campos');
+                    const quantidade = parseInt(document.getElementById('retiradaQuantidade').value);
+                    
+                    if (!tipo || !item || !quantidade || quantidade <= 0) {
+                        alert('Preencha todos os campos e informe uma quantidade válida');
                         return;
                     }
+
+                    // Validação adicional no frontend: verificar estoque disponível
+                    const estoqueAtual = estoque.materiais.find(m => m.nome === item) || 
+                                       estoque.municoes.find(m => m.nome === item);
+                    
+                    if (estoqueAtual && estoqueAtual.quantidade < quantidade) {
+                        alert(`Estoque insuficiente! Disponível: ${estoqueAtual.quantidade}, Solicitado: ${quantidade}`);
+                        return;
+                    }
+
+                    if (!confirm(`Confirmar retirada de ${quantidade} ${item}?`)) {
+                        return;
+                    }
+
                     try {
                         const token = localStorage.getItem('authToken');
                         const resp = await fetch(`${API_BASE}/estoque/retirar`, {
@@ -3867,6 +3919,11 @@ let editingEncomendaId = null;
         }
 
         function getStatusColor(status) {
+            // Validação de segurança para evitar erro de toLowerCase em valores null/undefined
+            if (!status || typeof status !== 'string') {
+                return '#95a5a6';
+            }
+            
             switch(status.toLowerCase()) {
                 case 'ativo':
                 case 'entregue':
@@ -3935,8 +3992,25 @@ let editingEncomendaId = null;
          */
         async function loadInventario() {
             try {
-                const response = await fetch(`${API_BASE}/estoque`);
+                const token = localStorage.getItem('authToken');
+                console.log('🔍 loadInventario - Token:', token ? 'Presente' : 'Ausente');
+                
+                const response = await fetch(`${API_BASE}/estoque`, {
+                    headers: {
+                        'Authorization': token ? `Bearer ${token}` : ''
+                    }
+                });
+                
+                console.log('🔍 loadInventario - Status da resposta:', response.status);
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('❌ Erro na resposta:', errorText);
+                    throw new Error(`HTTP ${response.status}: ${errorText}`);
+                }
+                
                 const data = await response.json();
+                console.log('🔍 loadInventario - Dados recebidos:', data);
                 const tbody = document.getElementById('inventarioTableBody');
                 if (!tbody) return;
                 let html = '';
@@ -3986,7 +4060,37 @@ let editingEncomendaId = null;
             }
             try {
                 const token = localStorage.getItem('authToken');
-                const response = await fetch(`${API_BASE}/estoque/${id}`, {
+                console.log('🔍 salvarInventarioItem - Token:', token ? 'Presente' : 'Ausente');
+                console.log('🔍 salvarInventarioItem - ID do item:', id);
+                
+                // Primeiro, buscar o item para obter tipo e nome
+                const itemResponse = await fetch(`${API_BASE}/estoque`, {
+                    headers: {
+                        'Authorization': token ? `Bearer ${token}` : ''
+                    }
+                });
+                
+                console.log('🔍 salvarInventarioItem - Status da busca do item:', itemResponse.status);
+                
+                if (!itemResponse.ok) {
+                    const errorText = await itemResponse.text();
+                    console.error('❌ Erro ao buscar item:', errorText);
+                    throw new Error('Erro ao buscar dados do item');
+                }
+                
+                const itens = await itemResponse.json();
+                const item = itens.find(i => i.id == id);
+                
+                console.log('🔍 salvarInventarioItem - Item encontrado:', item);
+                
+                if (!item) {
+                    throw new Error('Item não encontrado');
+                }
+                
+                const url = `${API_BASE}/estoque/${item.tipo}/${encodeURIComponent(item.nome)}`;
+                console.log('🔍 salvarInventarioItem - URL da requisição:', url);
+                
+                const response = await fetch(url, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
@@ -3994,6 +4098,8 @@ let editingEncomendaId = null;
                     },
                     body: JSON.stringify({ quantidade: qtd })
                 });
+                
+                console.log('🔍 salvarInventarioItem - Status da resposta:', response.status);
                 const data = await response.json();
                 if (response.ok) {
                     alert(data.message || 'Item atualizado');
@@ -4167,10 +4273,9 @@ let editingEncomendaId = null;
         document.getElementById('rotaForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             
-            // Obtem o nome do membro selecionado em vez do ID.  
-            // O backend espera receber o campo membro_nome.
+            // Obter ID do membro selecionado; backend espera `membro_id`
             const membroSelect = document.getElementById('rotaMembro');
-            const membro_nome = membroSelect.options[membroSelect.selectedIndex].text;
+            const membro_id = membroSelect.value;
             const quantidade = document.getElementById('rotaQuantidade').value;
             const data_entrega = document.getElementById('rotaData').value;
             const status = document.getElementById('rotaStatus').value;
@@ -4178,13 +4283,14 @@ let editingEncomendaId = null;
             const file = fileInput && fileInput.files && fileInput.files[0];
             const sendRequest = async (comprovanteBase64) => {
                 try {
-                    const payload = { membro_nome, quantidade, data_entrega, status };
+                    const payload = { membro_id, quantidade, data_entrega, status };
                     if (comprovanteBase64) {
                         payload.comprovante = comprovanteBase64;
                     }
+                    const token = localStorage.getItem('authToken');
                     const response = await fetch(`${API_BASE}/rotas`, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
                         body: JSON.stringify(payload)
                     });
                     const data = await response.json();
@@ -4332,7 +4438,7 @@ let editingEncomendaId = null;
             try {
                 // Inclui o token de autenticação para rotas protegidas
                 const token = localStorage.getItem('authToken');
-                const response = await fetch(`${API_BASE}/estoque`, {
+                const response = await fetch(`${API_BASE}/estoque/adicionar`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -4340,10 +4446,10 @@ let editingEncomendaId = null;
                     },
                     body: JSON.stringify({ tipo, item, quantidade, baixarMateriais })
                 });
-                
-                const data = await response.json();
-                
+                const ct = response.headers.get('content-type') || '';
+                const raw = ct.includes('application/json') ? await response.json() : await response.text();
                 if (response.ok) {
+                    const data = typeof raw === 'string' ? (()=>{ try { return JSON.parse(raw); } catch { return { message: raw }; } })() : raw;
                     alert(data.message || 'Estoque atualizado com sucesso!');
                     closeModal('estoqueModal');
                     // Após atualizar o estoque, aciona a atualização de encomendas prontas com base no estoque
@@ -4365,7 +4471,8 @@ let editingEncomendaId = null;
                     const g = document.getElementById('estoqueBaixarMateriaisGroup');
                     if (g) g.style.display = 'none';
                 } else {
-                    alert(data.error || 'Erro ao atualizar estoque');
+                    const msg = typeof raw === 'string' ? raw : (raw && raw.error);
+                    alert(msg || 'Erro ao atualizar estoque');
                 }
             } catch (error) {
                 alert('Erro de conexão: ' + error.message);
@@ -4486,40 +4593,71 @@ let editingEncomendaId = null;
         }
 
         /**
-         * Carrega os usuários com papel de líder e popula o seletor do modal de pagamento.
-         * Utiliza o endpoint /api/usuarios para obter a lista de usuários e filtra por role = 'lider'.
+         * Carrega os membros com cargo de líder e administrador e popula o seletor do modal de pagamento.
+         * Busca diretamente na tabela de membros onde temos os cargos.
          */
         async function loadLideres() {
             const select = document.getElementById('pagamentoLiderSelect');
             if (!select) return;
+            
+            // Debug: log para verificar o usuário atual
+            console.log('loadLideres - Usuário atual:', currentUser);
+            console.log('loadLideres - Role do usuário:', currentUser ? currentUser.role : 'N/A');
+            
             // Limpa opções existentes
-            select.innerHTML = '<option value="">Selecione...</option>';
+            select.innerHTML = '<option value="">Selecione um líder...</option>';
+            
             try {
-            // Busca usuários e membros para associar o nome do membro ao usuário líder.
-            const [usersRes, membrosRes] = await Promise.all([
-                fetch(`${API_BASE}/usuarios`),
-                fetch(`${API_BASE}/membros`)
-            ]);
-            const usuarios = await usersRes.json();
-            const membros = await membrosRes.json();
-            // Filtra somente os usuários com papel de líder
-            const lideres = Array.isArray(usuarios) ? usuarios.filter(u => u.role === 'lider') : [];
-            lideres.forEach(u => {
-                const opt = document.createElement('option');
-                opt.value = u.id;
-                // Tenta encontrar o nome do membro associado a este usuário (campo usuario_id)
-                let displayName = u.username;
-                if (Array.isArray(membros)) {
-                    const membro = membros.find(m => m.usuario_id === u.id);
-                    if (membro && membro.nome) {
-                        displayName = membro.nome;
+                console.log('Buscando membros com cargos de líder/gerente...');
+                
+                // Busca todos os membros (todos podem ver os líderes)
+                const membrosRes = await fetch(`${API_BASE}/membros`);
+                console.log('Resposta da API membros:', membrosRes.status, membrosRes.ok);
+                
+                if (membrosRes.ok) {
+                    const membros = await membrosRes.json();
+                    console.log('Membros retornados:', membros);
+                    
+                    // Filtra apenas membros com cargo de líder
+                    const lideres = Array.isArray(membros) ? membros.filter(m => 
+                        m.cargo === 'lider'
+                    ) : [];
+                    
+                    console.log('Líderes filtrados por cargo:', lideres);
+                    
+                    if (lideres.length > 0) {
+                        lideres.forEach(membro => {
+                            const opt = document.createElement('option');
+                            opt.value = membro.id;
+                            opt.textContent = `${membro.nome} (${membro.cargo})`;
+                            select.appendChild(opt);
+                        });
+                        console.log(`Adicionados ${lideres.length} líderes ao select`);
+                    } else {
+                        console.log('Nenhum membro com cargo de líder encontrado');
+
                     }
+                } else {
+                    console.error('Erro na API membros:', await membrosRes.text());
                 }
-                opt.textContent = displayName;
-                select.appendChild(opt);
-            });
+                
+                // Se não há opções, adiciona uma mensagem
+                if (select.options.length <= 1) {
+                    select.innerHTML = '<option value="">Nenhum líder disponível</option>';
+                    console.log('Nenhuma opção encontrada, mostrando mensagem padrão');
+                }
+                
+                console.log('Total de opções no select:', select.options.length);
+                
             } catch (err) {
                 console.error('Erro ao carregar líderes:', err);
+                // Fallback: mostra apenas o usuário atual se for líder
+                if (currentUser && currentUser.role === 'lider') {
+                    const opt = document.createElement('option');
+                    opt.value = currentUser.id;
+                    opt.textContent = `${currentUser.username} (${currentUser.role})`;
+                    select.appendChild(opt);
+                }
             }
         }
 
@@ -4533,6 +4671,19 @@ let editingEncomendaId = null;
             if (idInput) {
                 idInput.value = rotaId;
             }
+            
+            // Define a data/hora atual como padrão
+            const dataHoraInput = document.getElementById('pagamentoDataHora');
+            if (dataHoraInput) {
+                const now = new Date();
+                const year = now.getFullYear();
+                const month = String(now.getMonth() + 1).padStart(2, '0');
+                const day = String(now.getDate()).padStart(2, '0');
+                const hours = String(now.getHours()).padStart(2, '0');
+                const minutes = String(now.getMinutes()).padStart(2, '0');
+                dataHoraInput.value = `${year}-${month}-${day}T${hours}:${minutes}`;
+            }
+            
             // Carrega líderes e abre o modal
             loadLideres().then(() => {
                 openModal('pagamentoModal');
@@ -4647,6 +4798,8 @@ let editingEncomendaId = null;
                     openAddItemFamilia();
                 };
                 actionsDiv.appendChild(addBtn);
+
+
             }
         }
 
@@ -4654,6 +4807,11 @@ let editingEncomendaId = null;
          * Mapeia nomes de itens para arquivos de imagem
          */
         function getItemImagePath(itemName) {
+            // Validação de segurança para evitar erro de toLowerCase em valores null/undefined
+            if (!itemName || typeof itemName !== 'string') {
+                return '/static/images/items/default.jpg';
+            }
+            
             const imageMap = {
                 // Acessórios
                 'Clipe extendido': 'clipextendido.jpg',
@@ -4818,6 +4976,20 @@ let editingEncomendaId = null;
                         addBtn.style.cssText = 'font-size: 11px; padding: 6px 12px; flex: 1; min-width: 70px; border-radius: 4px;';
                         addBtn.onclick = () => openAdicionarEstoque(item.id, item.categoria, item.item);
                         actionsDiv.appendChild(addBtn);
+
+                        // Botão para excluir item (apenas para admin)
+                        if (user.role === 'admin') {
+                            const deleteBtn = document.createElement('button');
+                            deleteBtn.textContent = '🗑️';
+                            deleteBtn.className = 'btn-secondary';
+                            deleteBtn.style.cssText = 'font-size: 11px; padding: 6px 8px; min-width: 40px; border-radius: 4px; background: #e74c3c; color: white; border: none;';
+                            deleteBtn.onclick = () => {
+                                if (confirm(`Deseja excluir o item "${item.item}"?`)) {
+                                    excluirItemInventario(item.item);
+                                }
+                            };
+                            actionsDiv.appendChild(deleteBtn);
+                        }
                         
                         itemCard.appendChild(actionsDiv);
                     }
@@ -5350,7 +5522,7 @@ let editingEncomendaId = null;
 
         /**
          * Submete a adição de estoque para o servidor.
-         * Utiliza a mesma API de criação/atualização de item, passando a quantidade a ser adicionada.
+         * Utiliza a API de atualização de item existente, somando a quantidade atual.
          */
         async function submitAdicionarEstoque() {
             const modal = document.getElementById('adicionarEstoqueModal');
@@ -5376,27 +5548,86 @@ let editingEncomendaId = null;
             }
             
             try {
-                const response = await fetch(`${API_BASE}/inventario-familia`, {
+                // Calcula a nova quantidade total
+                const novaQuantidade = item.quantidade + quantidadeAdicionar;
+                
+                const response = await fetch(`${API_BASE}/inventario-familia/${itemId}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+                    },
+                    body: JSON.stringify({ 
+                        quantidade: novaQuantidade,
+                        preco: item.preco
+                    })
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || 'Erro ao adicionar estoque');
+                
+                // Registra no histórico a operação de adição
+                await registrarHistoricoEstoque(itemId, 'adicao', quantidadeAdicionar, motivo);
+                
+                alert(`Estoque adicionado com sucesso! ${quantidadeAdicionar} unidades adicionadas.`);
+                closeModal('adicionarEstoqueModal');
+                loadInventarioFamilia();
+            } catch (error) {
+                alert(error.message);
+            }
+        }
+
+        /**
+         * Registra uma operação no histórico do inventário família
+         */
+        async function registrarHistoricoEstoque(itemId, tipoOperacao, quantidade, motivo) {
+            try {
+                const response = await fetch(`${API_BASE}/historico-inventario-familia`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${localStorage.getItem('authToken')}`
                     },
                     body: JSON.stringify({ 
-                        categoria: item.categoria, 
-                        item: item.item, 
-                        quantidade: quantidadeAdicionar,
-                        preco: item.preco,
+                        item_id: itemId,
+                        tipo_operacao: tipoOperacao,
+                        quantidade: quantidade,
+                        usuario: currentUser ? currentUser.username : 'Sistema',
                         motivo: motivo
                     })
                 });
-                const data = await response.json();
-                if (!response.ok) throw new Error(data.error || 'Erro ao adicionar estoque');
-                alert(`Estoque adicionado com sucesso! ${quantidadeAdicionar} unidades adicionadas.`);
-                closeModal('adicionarEstoqueModal');
-                loadInventarioFamilia();
+                if (!response.ok) {
+                    console.warn('Erro ao registrar histórico:', await response.text());
+                }
             } catch (error) {
-                alert(error.message);
+                console.warn('Erro ao registrar histórico:', error);
+            }
+        }
+
+
+
+        /**
+         * Exclui um item específico do inventário família
+         */
+        async function excluirItemInventario(nomeItem) {
+            try {
+                const response = await fetch(`${API_BASE}/inventario-familia/item/${encodeURIComponent(nomeItem)}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    alert(`✅ ${data.message}`);
+                    // Recarrega o inventário para remover o item excluído
+                    loadInventarioFamilia();
+                } else {
+                    alert(`❌ Erro: ${data.error}`);
+                }
+            } catch (error) {
+                alert(`❌ Erro de conexão: ${error.message}`);
             }
         }
 
