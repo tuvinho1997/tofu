@@ -957,6 +957,44 @@
             </div>
         </div>
 
+        <!-- Modal para editar item do Inventário da Família -->
+        <div id="editItemFamiliaModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 class="modal-title">Editar Item do Inventário</h3>
+                    <button class="close-btn" type="button" onclick="closeModal('editItemFamiliaModal')">&times;</button>
+                </div>
+                <form id="editItemFamiliaForm" onsubmit="event.preventDefault(); submitEditItemFamilia();">
+                    <div class="form-group">
+                        <label for="editItemCategoria">Categoria</label>
+                        <select id="editItemCategoria" required>
+                            <option value="">Selecione a categoria...</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="editItemNome">Item</label>
+                        <input type="text" id="editItemNome" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="editItemQuantidade">Quantidade</label>
+                        <input type="number" id="editItemQuantidade" min="0" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="editItemPreco">Preço Unitário (opcional)</label>
+                        <input type="number" id="editItemPreco" min="0" step="0.01">
+                    </div>
+                    <div class="form-group">
+                        <label for="editItemImagem">Nova Imagem (opcional)</label>
+                        <input type="file" id="editItemImagem" accept="image/*">
+                    </div>
+                    <div style="text-align:right; margin-top: 15px;">
+                        <button type="submit" class="btn-primary">Salvar</button>
+                        <button type="button" class="btn-secondary" onclick="closeModal('editItemFamiliaModal')" style="margin-left: 10px;">Cancelar</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
         <!-- Modal para nova requisição de item da Família -->
         <div id="novaReqFamiliaModal" class="modal">
             <div class="modal-content" style="max-width: 600px;">
@@ -1231,6 +1269,7 @@
                             <table class="table">
                                 <thead>
                                     <tr>
+                                        <th style="width:40px; text-align:center;">Img</th>
                                         <th>Material</th>
                                         <th>Quantidade</th>
                                         <th>Preço Unit.</th>
@@ -1245,6 +1284,7 @@
                             <table class="table">
                                 <thead>
                                     <tr>
+                                        <th style="width:40px; text-align:center;">Img</th>
                                         <th>Tipo</th>
                                         <th>Quantidade</th>
                                         <th>Preço Unit.</th>
@@ -3536,7 +3576,17 @@ let editingEncomendaId = null;
                 });
                 Object.keys(groupedMat).forEach(name => {
                     const row = document.createElement('tr');
+                    // Gera caminho da imagem com base no nome do material. Usa a função
+                    // getItemImagePath se estiver disponível; caso contrário, usa
+                    // uma imagem padrão.
+                    let imgSrc;
+                    try {
+                        imgSrc = typeof getItemImagePath === 'function' ? getItemImagePath(name) : '/static/images/items/default.jpg';
+                    } catch (e) {
+                        imgSrc = '/static/images/items/default.jpg';
+                    }
                     row.innerHTML = `
+                        <td style="text-align:center;"><img src="${imgSrc}" alt="${name}" style="width:32px; height:32px; object-fit:contain; border-radius:4px;"></td>
                         <td>${name}</td>
                         <td>${groupedMat[name].quantidade}</td>
                         <td>R$ ${groupedMat[name].preco.toFixed(2)}</td>
@@ -3563,7 +3613,14 @@ let editingEncomendaId = null;
                 Object.keys(groupedMun).forEach(name => {
                     const row = document.createElement('tr');
                     const nomeFormatado = typeof formatMunicaoName === 'function' ? formatMunicaoName(name) : name;
+                    let imgSrc;
+                    try {
+                        imgSrc = typeof getItemImagePath === 'function' ? getItemImagePath(name) : '/static/images/items/default.jpg';
+                    } catch (e) {
+                        imgSrc = '/static/images/items/default.jpg';
+                    }
                     row.innerHTML = `
+                        <td style="text-align:center;"><img src="${imgSrc}" alt="${nomeFormatado}" style="width:32px; height:32px; object-fit:contain; border-radius:4px;"></td>
                         <td>${nomeFormatado}</td>
                         <td>${groupedMun[name].quantidade}</td>
                         <td>R$ ${groupedMun[name].preco.toFixed(2)}</td>
@@ -5469,8 +5526,18 @@ let editingEncomendaId = null;
                         addBtn.textContent = '+ Estoque';
                         addBtn.className = 'btn-primary';
                         addBtn.style.cssText = 'font-size: 11px; padding: 6px 12px; flex: 1; min-width: 70px; border-radius: 4px;';
-                        addBtn.onclick = () => openAdicionarEstoque(item.id, item.categoria, item.item);
+                        // Passa o nome do item de maneira segura (nomeItem, se definido) ou item.nome/item.item
+                        const nomeParaEstoque = (typeof nomeItem !== 'undefined' && nomeItem) ? nomeItem : (item.nome || item.item);
+                        addBtn.onclick = () => openAdicionarEstoque(item.id, item.categoria, nomeParaEstoque);
                         actionsDiv.appendChild(addBtn);
+
+                        // Botão para editar item (para cargos elevados)
+                        const editBtn = document.createElement('button');
+                        editBtn.textContent = '✏️';
+                        editBtn.className = 'btn-secondary';
+                        editBtn.style.cssText = 'font-size: 11px; padding: 6px 8px; min-width: 40px; border-radius: 4px; background: #2980b9; color: white; border: none;';
+                        editBtn.onclick = () => openEditItemFamilia(item.id);
+                        actionsDiv.appendChild(editBtn);
 
                         // Botão para excluir item (apenas para admin)
                         if (user.role === 'admin') {
@@ -5479,8 +5546,9 @@ let editingEncomendaId = null;
                             deleteBtn.className = 'btn-secondary';
                             deleteBtn.style.cssText = 'font-size: 11px; padding: 6px 8px; min-width: 40px; border-radius: 4px; background: #e74c3c; color: white; border: none;';
                             deleteBtn.onclick = () => {
-                                if (confirm(`Deseja excluir o item "${item.item}"?`)) {
-                                    excluirItemInventario(item.item);
+                                const nomeItemDel = (typeof nomeItem !== 'undefined' && nomeItem) ? nomeItem : (item.nome || item.item);
+                                if (confirm(`Deseja excluir o item "${nomeItemDel}"?`)) {
+                                    excluirItemInventario(nomeItemDel);
                                 }
                             };
                             actionsDiv.appendChild(deleteBtn);
@@ -5546,23 +5614,24 @@ let editingEncomendaId = null;
                         statusBadge = `<span style="background: #95a5a6; color: white; padding: 4px 8px; border-radius: 12px; font-size: 0.85em; font-weight: 600;">${req.status}</span>`;
                 }
                 
-                // Monta coluna de ações
+                // Monta coluna de ações. Usuários com cargos elevados podem executar diversas ações
                 let actionsHTML = '';
                 const highRoles = ['admin','grande-mestre','mestre-dos-ventos'];
                 if (highRoles.includes(user.role)) {
                     if (req.status === 'pendente') {
-                        // Ações para pendentes: aprovar/rejeitar + editar/excluir
+                        // Ações para pendentes: aprovar, rejeitar, editar
                         actionsHTML += `<button class="btn-primary" onclick="aprovarRequisicao(${req.id})" style="margin: 2px; padding: 6px 12px; font-size: 0.85em;">✅ Aprovar</button>`;
                         actionsHTML += `<button class="btn-secondary" onclick="rejeitarRequisicao(${req.id})" style="margin: 2px; padding: 6px 12px; font-size: 0.85em;">❌ Rejeitar</button>`;
                         actionsHTML += `<button class="btn-primary" onclick="editarRequisicao(${req.id})" style="margin: 2px; padding: 6px 12px; font-size: 0.85em;">✏️ Editar</button>`;
-                        actionsHTML += `<button class="btn-secondary" onclick="excluirRequisicao(${req.id})" style="margin: 2px; padding: 6px 12px; font-size: 0.85em;">🗑️ Excluir</button>`;
                     } else if (req.status === 'aprovado') {
-                        // Somente entregar (deletar não permitido em aprovadas)
+                        // Ação principal para aprovadas: entregar
                         actionsHTML += `<button class="btn-primary" onclick="entregarRequisicao(${req.id})" style="margin: 2px; padding: 6px 12px; font-size: 0.85em;">📦 Entregar</button>`;
                     } else if (req.status === 'entregue') {
-                        // Permitir cancelar somente para cargos elevados
+                        // Ação principal para entregues: cancelar
                         actionsHTML += `<button class="btn-secondary" onclick="cancelarRequisicao(${req.id})" style="margin: 2px; padding: 6px 12px; font-size: 0.85em;">🔄 Cancelar</button>`;
                     }
+                    // Em qualquer status, líderes podem excluir a requisição do registro
+                    actionsHTML += `<button class="btn-secondary" onclick="excluirRequisicao(${req.id})" style="margin: 2px; padding: 6px 12px; font-size: 0.85em;">🗑️ Excluir</button>`;
                 }
 
                 // Se não houver ações definidas, mostrar texto informativo
@@ -5742,6 +5811,134 @@ let editingEncomendaId = null;
                 alert('Preencha todos os campos obrigatórios corretamente');
                 return;
             }
+
+        /**
+         * Identificador do item atualmente em edição no inventário da família.
+         * Esta variável é usada por submitEditItemFamilia() para saber qual
+         * registro deve ser atualizado.
+         */
+        let currentEditItemFamiliaId = null;
+
+        /**
+         * Abre o modal de edição de um item de inventário da família. Carrega
+         * categorias disponíveis, preenche os campos com os dados existentes
+         * e salva o ID do item para posterior submissão.
+         * @param {number} id Identificador do item no banco de dados
+         */
+        function openEditItemFamilia(id) {
+            currentEditItemFamiliaId = id;
+            // Limpa e carrega categorias no seletor
+            const catSelect = document.getElementById('editItemCategoria');
+            if (catSelect) {
+                catSelect.innerHTML = '<option value="">Selecione a categoria...</option>';
+                (async () => {
+                    try {
+                        const token = localStorage.getItem('authToken');
+                        const resp = await fetch(`${API_BASE}/inventario-familia/categorias`, {
+                            headers: { 'Authorization': `Bearer ${token || ''}` }
+                        });
+                        const cats = await resp.json();
+                        if (Array.isArray(cats)) {
+                            cats.forEach(cat => {
+                                const opt = document.createElement('option');
+                                opt.value = cat;
+                                opt.textContent = cat;
+                                catSelect.appendChild(opt);
+                            });
+                        }
+                    } catch (err) {
+                        console.error('Erro ao carregar categorias do inventário:', err);
+                    }
+                })();
+            }
+            // Localiza o item pelo ID
+            const item = inventarioFamilia.find(it => it.id === id);
+            if (!item) {
+                alert('Item não encontrado');
+                return;
+            }
+            // Preenche campos
+            const nomeItem = item.nome || item.item || '';
+            document.getElementById('editItemNome').value = nomeItem;
+            document.getElementById('editItemQuantidade').value = item.quantidade;
+            document.getElementById('editItemPreco').value = item.preco || '';
+            // Seleciona categoria atual (se existir) após carregar opções
+            setTimeout(() => {
+                if (catSelect && item.categoria) {
+                    catSelect.value = item.categoria;
+                }
+            }, 200);
+            // Limpa campo de imagem
+            const imgInput = document.getElementById('editItemImagem');
+            if (imgInput) imgInput.value = '';
+            openModal('editItemFamiliaModal');
+        }
+
+        /**
+         * Envia as alterações de um item do inventário da família para o servidor.
+         * Caso uma nova imagem seja escolhida, ela é enviada antes e o caminho
+         * retornado é utilizado na atualização do item. Após o sucesso, o
+         * inventário é recarregado.
+         */
+        async function submitEditItemFamilia() {
+            if (!currentEditItemFamiliaId) {
+                alert('Nenhum item selecionado para edição');
+                return;
+            }
+            const categoria = document.getElementById('editItemCategoria').value.trim();
+            const nome = document.getElementById('editItemNome').value.trim();
+            const qtdStr = document.getElementById('editItemQuantidade').value;
+            const precoStr = document.getElementById('editItemPreco').value;
+            const quantidade = parseInt(qtdStr);
+            const preco = precoStr !== '' ? parseFloat(precoStr) : null;
+            if (!nome || isNaN(quantidade) || quantidade < 0) {
+                alert('Preencha os campos obrigatórios corretamente');
+                return;
+            }
+            try {
+                let imagemPath = undefined;
+                const imgInput = document.getElementById('editItemImagem');
+                // Caso o usuário tenha escolhido uma nova imagem, faz upload
+                if (imgInput && imgInput.files && imgInput.files[0]) {
+                    const imgForm = new FormData();
+                    imgForm.append('imagem', imgInput.files[0]);
+                    const imgResp = await fetch(`${API_BASE}/imagens/upload`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${localStorage.getItem('authToken') || ''}`
+                        },
+                        body: imgForm
+                    });
+                    const imgData = await imgResp.json();
+                    if (!imgResp.ok) {
+                        throw new Error(imgData.error || 'Erro ao enviar imagem do item');
+                    }
+                    imagemPath = imgData.caminho;
+                }
+                const payload = {
+                    categoria: categoria || undefined,
+                    item: nome,
+                    quantidade,
+                    preco: preco !== null ? preco : undefined,
+                    imagem: imagemPath
+                };
+                const response = await fetch(`${API_BASE}/inventario-familia/${currentEditItemFamiliaId}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+                    },
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || 'Erro ao atualizar item');
+                alert('Item atualizado com sucesso');
+                closeModal('editItemFamiliaModal');
+                loadInventarioFamilia();
+            } catch (error) {
+                alert(error.message);
+            }
+        }
             if (!motivo) {
                 alert('O motivo da alteração é obrigatório');
                 return;
