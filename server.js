@@ -97,8 +97,27 @@ function initializeDatabase() {
         rg TEXT,
         telefone TEXT,
         cargo TEXT DEFAULT 'membro',
+        imagem TEXT,
         data_cadastro DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
+
+    // Verifica se a tabela de membros possui a coluna 'imagem'. Caso a tabela
+    // tenha sido criada anteriormente sem essa coluna, adiciona-a através de
+    // ALTER TABLE. Isso garante compatibilidade com bancos existentes.
+    db.all('PRAGMA table_info(membros)', (err, cols) => {
+        if (!err && cols) {
+            const hasImagem = cols.some(c => c.name === 'imagem');
+            if (!hasImagem) {
+                db.run('ALTER TABLE membros ADD COLUMN imagem TEXT', alterErr => {
+                    if (alterErr) {
+                        console.warn('Não foi possível adicionar a coluna imagem em membros:', alterErr.message);
+                    } else {
+                        console.log('Coluna imagem adicionada à tabela membros');
+                    }
+                });
+            }
+        }
+    });
 
     // Criar tabela de rotas
     db.run(`CREATE TABLE IF NOT EXISTS rotas (
@@ -1637,9 +1656,15 @@ app.get('/api/membros', (req, res) => {
 });
 
 app.post('/api/membros', (req, res) => {
-    const { nome, rg, telefone, cargo } = req.body;
+    const { nome, rg, telefone, cargo, imagem } = req.body;
 
-    db.run('INSERT INTO membros (nome, rg, telefone, cargo) VALUES (?, ?, ?, ?)', [nome, rg, telefone, cargo || 'membro'], function (err) {
+    // cargo default para membros sem definição explícita
+    const cargoValor = cargo || 'membro';
+
+    // Realiza a inserção incluindo a coluna imagem. Caso a coluna não exista,
+    // o SQLite irá ignorar a coluna extra e armazenar apenas as colunas
+    // conhecidas, mantendo compatibilidade retroativa.
+    db.run('INSERT INTO membros (nome, rg, telefone, cargo, imagem) VALUES (?, ?, ?, ?, ?)', [nome, rg, telefone, cargoValor, imagem || null], function (err) {
         if (err) {
             if (err.message.includes('UNIQUE constraint failed')) {
                 return res.status(400).json({ error: 'RG já cadastrado' });
@@ -1671,9 +1696,13 @@ app.put('/api/membros/:id', (req, res) => {
     });
 });
 
-app.delete('/api/membros/:id', (req, res) => {
+app.delete('/api/membros/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
-
+    // Somente administradores ou cargos mais altos podem excluir membros
+    const allowedRolesDeleteMembro = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRolesDeleteMembro.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas administradores, Grande Mestres ou Mestres dos Ventos podem excluir membros.' });
+    }
     db.run('DELETE FROM membros WHERE id = ?', [id], function (err) {
         if (err) {
             return res.status(500).json({ error: err.message });
