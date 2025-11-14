@@ -248,21 +248,111 @@
         }
 
         .btn-primary {
-            background: linear-gradient(135deg, #8e44ad 0%, #9b59b6 100%);
-            border: none;
-            color: white;
-            padding: 12px 24px;
-            border-radius: 8px;
+            /*
+             * Estilo aprimorado para botões primários. Utilizamos um degradê mais suave
+             * e adicionamos borda discreta, maior arredondamento e leve espaçamento
+             * entre letras para harmonizar melhor com o restante do layout escuro.
+             */
+            background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%);
+            border: 1px solid rgba(142, 68, 173, 0.5);
+            color: #ffffff;
+            padding: 10px 24px;
+            border-radius: 10px;
             cursor: pointer;
             font-size: 14px;
-            font-weight: 500;
+            font-weight: 600;
+            letter-spacing: 0.5px;
             transition: all 0.3s ease;
-            box-shadow: 0 4px 15px rgba(142, 68, 173, 0.3);
+            box-shadow: 0 4px 12px rgba(142, 68, 173, 0.4);
         }
 
         .btn-primary:hover {
             transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(142, 68, 173, 0.4);
+            box-shadow: 0 8px 20px rgba(142, 68, 173, 0.5);
+        }
+
+        /*
+         * Estilos para o organograma em forma de árvore genealógica. Cada nível
+         * representa um cargo hierárquico e contém os membros associados. As linhas
+         * verticais conectam os níveis, criando a sensação de hierarquia.
+         */
+        .tree-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            margin-top: 20px;
+        }
+
+        .tree-level {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            position: relative;
+            margin-bottom: 30px;
+        }
+
+        /* Linha vertical que conecta os níveis, omitida no primeiro nível */
+        .tree-level + .tree-level::before {
+            content: '';
+            position: absolute;
+            top: -20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0;
+            height: 20px;
+            border-left: 2px solid #8e44ad;
+        }
+
+        .level-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: #ecf0f1;
+            text-align: center;
+        }
+
+        .tree-nodes {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+
+        .tree-node {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+        }
+
+        .tree-node img {
+            width: 72px;
+            height: 72px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2px solid #8e44ad;
+        }
+
+        .tree-node .avatar-placeholder {
+            width: 72px;
+            height: 72px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #34495e;
+            border: 2px solid #8e44ad;
+            color: #ecf0f1;
+            font-size: 28px;
+            font-weight: 600;
+        }
+
+        .tree-node .node-name {
+            margin-top: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #ecf0f1;
         }
 
         .btn-secondary {
@@ -825,7 +915,15 @@
                 <div class="modal-body">
                     <div style="margin-bottom:10px;">
                         <label>Categoria:<br>
-                            <input type="text" id="addItemCategoria" placeholder="Ex.: Produtos Comprados" style="width:100%; padding:4px;" required>
+                            <!--
+                                A categoria já deve ser escolhida entre as categorias existentes no inventário.
+                                Por isso substituímos o input de texto por um seletor dinâmico, que será
+                                populado via JavaScript quando o modal for aberto. A primeira opção
+                                instruirá o usuário a selecionar uma categoria.
+                            -->
+                            <select id="addItemCategoria" style="width:100%; padding:4px;" required>
+                                <option value="">Selecione a categoria...</option>
+                            </select>
                         </label>
                     </div>
                     <div style="margin-bottom:10px;">
@@ -1610,6 +1708,38 @@
                     </thead>
                     <tbody id="inventarioTableBody">
                     </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Inventário Família -->
+    <!--
+        Este modal permite editar as quantidades de todos os itens do inventário da família
+        de uma só vez. Ele funciona de forma similar ao modal de inventário do
+        estoque, apresentando uma tabela com campo de edição para cada item e
+        um botão "Salvar Tudo" que envia as alterações em lote para o servidor.
+    -->
+    <div id="inventarioFamiliaModal" class="modal">
+        <div class="modal-content" style="max-width: 600px;">
+            <div class="modal-header">
+                <h3 class="modal-title">Inventário da Família</h3>
+                <button class="close-btn" onclick="closeModal('inventarioFamiliaModal')">&times;</button>
+            </div>
+            <div class="modal-body" style="max-height: 400px; overflow-y: auto;">
+                <div style="margin-bottom: 15px; text-align: right;">
+                    <button id="btnSalvarTudoFamilia" class="btn-primary" onclick="salvarTudoInventarioFamilia()" style="display: none;">
+                        💾 Salvar Tudo
+                    </button>
+                </div>
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Item</th>
+                            <th>Quantidade</th>
+                        </tr>
+                    </thead>
+                    <tbody id="inventarioFamiliaTableBody"></tbody>
                 </table>
             </div>
         </div>
@@ -4305,6 +4435,130 @@ let editingEncomendaId = null;
             }
         }
 
+        // ===== Funções para Inventário da Família (edição em massa) =====
+        /**
+         * Abre o modal de inventário da família, populando a tabela de itens com
+         * campos de edição de quantidade. Semelhante ao inventário de estoque,
+         * permite que o usuário ajuste manualmente os saldos de cada item.
+         */
+        function openInventarioFamiliaModal() {
+            const tbody = document.getElementById('inventarioFamiliaTableBody');
+            if (!tbody) return;
+            tbody.innerHTML = '';
+
+            // Reinicia conjunto de itens modificados e oculta o botão de salvar
+            window.itensModificadosFamilia = new Set();
+            const btnSave = document.getElementById('btnSalvarTudoFamilia');
+            if (btnSave) btnSave.style.display = 'none';
+
+            if (!Array.isArray(inventarioFamilia) || inventarioFamilia.length === 0) {
+                const tr = document.createElement('tr');
+                const td = document.createElement('td');
+                td.colSpan = 2;
+                td.style.cssText = 'text-align:center; color:#95a5a6; padding:40px;';
+                td.textContent = 'Nenhum item encontrado';
+                tr.appendChild(td);
+                tbody.appendChild(tr);
+            } else {
+                inventarioFamilia.forEach(item => {
+                    const tr = document.createElement('tr');
+                    const nomeItem = item.item || item.nome || '';
+                    const tdNome = document.createElement('td');
+                    tdNome.textContent = nomeItem;
+                    const tdQtd = document.createElement('td');
+                    const input = document.createElement('input');
+                    input.type = 'number';
+                    input.min = '0';
+                    input.value = parseFloat(item.quantidade) || 0;
+                    input.id = `inventarioFamilia_qtd_${item.id}`;
+                    input.style.cssText = 'width:80px; padding:4px; margin-right:5px;';
+                    input.onchange = () => marcarItemModificadoFamilia(item.id);
+                    tdQtd.appendChild(input);
+                    tr.appendChild(tdNome);
+                    tr.appendChild(tdQtd);
+                    tbody.appendChild(tr);
+                });
+            }
+            openModal('inventarioFamiliaModal');
+        }
+
+        /**
+         * Marca um item do inventário da família como modificado. Utiliza um Set
+         * global para registrar quais IDs tiveram a quantidade alterada. Quando
+         * ao menos um item for alterado, exibe o botão "Salvar Tudo" no modal.
+         */
+        function marcarItemModificadoFamilia(id) {
+            if (!window.itensModificadosFamilia) {
+                window.itensModificadosFamilia = new Set();
+            }
+            window.itensModificadosFamilia.add(id);
+            const btnSave = document.getElementById('btnSalvarTudoFamilia');
+            if (btnSave && window.itensModificadosFamilia.size > 0) {
+                btnSave.style.display = 'inline-block';
+            }
+        }
+
+        /**
+         * Salva todas as modificações de quantidade realizadas no modal de
+         * inventário da família. Envia um array com id e nova quantidade para
+         * o endpoint /inventario-familia/atualizar-multiplos.
+         */
+        async function salvarTudoInventarioFamilia() {
+            if (!window.itensModificadosFamilia || window.itensModificadosFamilia.size === 0) {
+                alert('Nenhum item foi modificado');
+                return;
+            }
+            try {
+                const token = localStorage.getItem('authToken');
+                if (!token) {
+                    alert('Token de autenticação não encontrado');
+                    return;
+                }
+                // Coletar itens modificados com suas novas quantidades
+                const itensParaSalvar = [];
+                window.itensModificadosFamilia.forEach(id => {
+                    const input = document.getElementById('inventarioFamilia_qtd_' + id);
+                    if (input) {
+                        const qtd = parseFloat(input.value);
+                        if (!isNaN(qtd) && qtd >= 0) {
+                            itensParaSalvar.push({ id: id, quantidade: qtd });
+                        }
+                    }
+                });
+                if (itensParaSalvar.length === 0) {
+                    alert('Nenhum item válido para salvar');
+                    return;
+                }
+                if (!confirm(`Deseja salvar ${itensParaSalvar.length} itens?`)) {
+                    return;
+                }
+                const response = await fetch(`${API_BASE}/inventario-familia/atualizar-multiplos`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ itens: itensParaSalvar })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    alert(data.message || 'Itens atualizados com sucesso');
+                    // Limpa conjunto de itens modificados
+                    window.itensModificadosFamilia.clear();
+                    const btnSave = document.getElementById('btnSalvarTudoFamilia');
+                    if (btnSave) btnSave.style.display = 'none';
+                    // Recarrega o inventário da família e fecha o modal
+                    await loadInventarioFamilia();
+                    closeModal('inventarioFamiliaModal');
+                } else {
+                    alert(data.error || 'Erro ao atualizar itens: ' + (data.erros ? data.erros.join('; ') : ''));
+                }
+            } catch (error) {
+                console.error('Erro ao salvar inventário da família:', error);
+                alert('Erro ao salvar inventário: ' + error.message);
+            }
+        }
+
         // Atualiza lista de itens na retirada de estoque conforme o tipo selecionado
         function updateRetiradaItemOptions() {
             const tipo = document.getElementById('retiradaTipo').value;
@@ -4995,7 +5249,7 @@ let editingEncomendaId = null;
             // Define visibilidade do contêiner de ações
             if (['admin','grande-mestre','mestre-dos-ventos'].includes(user.role)) {
                 actionsDiv.style.display = 'flex';
-                // Ação para adicionar item (somente administradores ou cargos de alto escalão)
+                // Botão para adicionar item (somente administradores ou cargos de alto escalão)
                 const addBtn = document.createElement('button');
                 addBtn.className = 'btn-primary';
                 addBtn.textContent = 'Adicionar Item';
@@ -5003,6 +5257,15 @@ let editingEncomendaId = null;
                     openAddItemFamilia();
                 };
                 actionsDiv.appendChild(addBtn);
+                // Botão para inventário em massa: permite editar saldos de todos os itens
+                const invBtn = document.createElement('button');
+                invBtn.className = 'btn-secondary';
+                invBtn.textContent = 'Inventário';
+                invBtn.style.marginLeft = '10px';
+                invBtn.onclick = () => {
+                    openInventarioFamiliaModal();
+                };
+                actionsDiv.appendChild(invBtn);
             } else {
                 actionsDiv.style.display = 'none';
             }
@@ -5402,11 +5665,39 @@ let editingEncomendaId = null;
          * Pré-preenche os campos com valores vazios ou zero.
          */
         function openAddItemFamilia() {
-            document.getElementById('addItemCategoria').value = '';
+            // Carrega as categorias existentes a partir do servidor para o seletor
+            const catSelect = document.getElementById('addItemCategoria');
+            // Limpa opções atuais e adiciona a opção padrão
+            if (catSelect) {
+                catSelect.innerHTML = '<option value="">Selecione a categoria...</option>';
+                // Tenta buscar as categorias através do endpoint apropriado
+                (async () => {
+                    try {
+                        const token = localStorage.getItem('authToken');
+                        const resp = await fetch(`${API_BASE}/inventario-familia/categorias`, {
+                            headers: { 'Authorization': `Bearer ${token || ''}` }
+                        });
+                        const cats = await resp.json();
+                        if (Array.isArray(cats)) {
+                            cats.forEach(cat => {
+                                const opt = document.createElement('option');
+                                opt.value = cat;
+                                opt.textContent = cat;
+                                catSelect.appendChild(opt);
+                            });
+                        }
+                    } catch (err) {
+                        console.error('Erro ao carregar categorias do inventário:', err);
+                    }
+                })();
+            }
+            // Reset dos demais campos
             document.getElementById('addItemNome').value = '';
             document.getElementById('addItemQuantidade').value = 0;
             document.getElementById('addItemPreco').value = '';
             document.getElementById('addItemMotivo').value = '';
+            const imgInput = document.getElementById('addItemImagem');
+            if (imgInput) imgInput.value = '';
             openModal('addItemFamiliaModal');
         }
 
@@ -5934,15 +6225,15 @@ let editingEncomendaId = null;
             // Agrupa membros por cargo
             const grupos = {};
             membrosList.forEach(m => {
-                // Normaliza o cargo: converte valores nulos/indefinidos em 'membro' e
-                // trata o cargo 'membro' como 'acolito' para compatibilidade com o novo organograma.
+                // Normaliza o cargo: valores nulos/indefinidos viram 'membro' e
+                // o cargo 'membro' é tratado como 'acolito' para compatibilidade.
                 let cargoKey = (m.cargo || 'membro').toLowerCase();
                 if (cargoKey === 'membro') cargoKey = 'acolito';
                 if (!grupos[cargoKey]) grupos[cargoKey] = [];
                 grupos[cargoKey].push(m);
             });
 
-            // Define a ordem em que os cargos devem ser exibidos
+            // Ordem de exibição dos cargos (níveis hierárquicos)
             const ordem = [
                 'grande-mestre',
                 'mestre-dos-ventos',
@@ -5952,40 +6243,64 @@ let editingEncomendaId = null;
                 'acolito'
             ];
 
-            // Função auxiliar para criar elemento de membro
-            function createMembroElement(m) {
-                // Este elemento apenas exibe o nome do membro. A alteração de cargo
-                // deve ser feita em outras seções (como na tabela de membros) e não aqui.
-                const li = document.createElement('li');
-                li.style.marginBottom = '8px';
-                const nameSpan = document.createElement('span');
-                nameSpan.textContent = m.nome || m.username || 'Usuário';
-                nameSpan.style.marginRight = '8px';
-                li.appendChild(nameSpan);
-                return li;
-            }
+            // Cria o contêiner da árvore
+            const tree = document.createElement('div');
+            tree.className = 'tree-container';
 
-            // Cria uma lista para cada grupo de cargo
             ordem.forEach(cargo => {
                 const members = grupos[cargo];
                 if (members && members.length > 0) {
-                    const section = document.createElement('div');
-                    section.style.marginBottom = '15px';
-                    const header = document.createElement('h4');
-                    header.textContent = cargoDisplayMap[cargo] || cargo;
-                    header.style.color = '#ecf0f1';
-                    header.style.marginBottom = '8px';
-                    section.appendChild(header);
-                    const ul = document.createElement('ul');
-                    ul.style.listStyle = 'none';
-                    ul.style.paddingLeft = '15px';
-                    members.forEach(member => {
-                        ul.appendChild(createMembroElement(member));
+                    // Cada nível corresponde a um cargo
+                    const level = document.createElement('div');
+                    level.className = 'tree-level';
+
+                    // Título do cargo
+                    const titleEl = document.createElement('div');
+                    titleEl.className = 'level-title';
+                    titleEl.textContent = cargoDisplayMap[cargo] || cargo;
+                    level.appendChild(titleEl);
+
+                    // Contêiner de nós (membros)
+                    const nodesEl = document.createElement('div');
+                    nodesEl.className = 'tree-nodes';
+
+                    members.forEach(membro => {
+                        const node = document.createElement('div');
+                        node.className = 'tree-node';
+
+                        // Imagem ou placeholder
+                        if (membro.imagem) {
+                            const img = document.createElement('img');
+                            // Ajusta o caminho: se já começa com http ou /static, usa diretamente; caso contrário, prefixa '/'
+                            const src = membro.imagem.startsWith('http') || membro.imagem.startsWith('/')
+                                ? membro.imagem
+                                : '/' + membro.imagem.replace(/^\/*/, '');
+                            img.src = src;
+                            img.alt = membro.nome || membro.username || '';
+                            node.appendChild(img);
+                        } else {
+                            // Avatar com inicial quando não há imagem
+                            const placeholder = document.createElement('div');
+                            placeholder.className = 'avatar-placeholder';
+                            const initial = ((membro.nome || membro.username || 'U').trim().charAt(0) || '').toUpperCase();
+                            placeholder.textContent = initial;
+                            node.appendChild(placeholder);
+                        }
+
+                        // Nome abaixo da imagem
+                        const name = document.createElement('div');
+                        name.className = 'node-name';
+                        name.textContent = membro.nome || membro.username || '';
+                        node.appendChild(name);
+                        nodesEl.appendChild(node);
                     });
-                    section.appendChild(ul);
-                    container.appendChild(section);
+
+                    level.appendChild(nodesEl);
+                    tree.appendChild(level);
                 }
             });
+
+            container.appendChild(tree);
         }
 
         // Chama o endpoint para atualizar o cargo do membro no backend
