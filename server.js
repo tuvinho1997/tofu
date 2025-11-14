@@ -1920,38 +1920,54 @@ app.post('/api/membros', (req, res) => {
 
         // Se username e senha foram fornecidos, criar usuário automaticamente
         if (username && password) {
-            // Normalizar username (trim e lowercase para comparação)
-            const usernameNormalized = username.trim().toLowerCase();
+            // Normalizar username (trim para inserção)
+            const usernameTrim = username.trim();
             
-            // Verificar se o username já existe em usuarios OU em cadastro_pendentes (case-insensitive)
-            db.get('SELECT id, username FROM usuarios WHERE LOWER(TRIM(username)) = ?', [usernameNormalized], (errUser, existingUser) => {
+            // Verificar se o username já existe em usuarios (verificação exata e case-insensitive)
+            // SQLite por padrão é case-insensitive para TEXT, mas vamos verificar de várias formas
+            // IMPORTANTE: Usar COLLATE NOCASE para garantir comparação case-insensitive
+            db.get('SELECT id, username FROM usuarios WHERE username = ? COLLATE NOCASE OR LOWER(TRIM(username)) = ?', 
+                   [usernameTrim, usernameTrim.toLowerCase()], (errUser, existingUser) => {
                 if (errUser) {
                     console.error('Erro ao verificar username em usuarios:', errUser.message);
                     db.run('DELETE FROM membros WHERE id = ?', [membroId], () => {});
                     return res.status(500).json({ error: 'Erro ao verificar username: ' + errUser.message });
                 }
                 if (existingUser) {
-                    console.log(`Username "${username}" já existe em usuarios (ID: ${existingUser.id}, username: ${existingUser.username})`);
+                    console.log(`Username "${username}" já existe em usuarios (ID: ${existingUser.id}, username: "${existingUser.username}")`);
                     // Se o username já existe, remover o membro criado e retornar erro
                     db.run('DELETE FROM membros WHERE id = ?', [membroId], () => {});
-                    return res.status(400).json({ error: 'Username já está em uso. Escolha outro.' });
+                    return res.status(400).json({ error: `Username já está em uso (encontrado: "${existingUser.username}"). Escolha outro.` });
                 }
                 
-                // Verificar também em cadastro_pendentes (case-insensitive)
-                db.get('SELECT id, username FROM cadastro_pendentes WHERE LOWER(TRIM(username)) = ?', [usernameNormalized], (errPending, pendingUser) => {
+                // Verificar também em cadastro_pendentes (verificação exata e case-insensitive)
+                db.get('SELECT id, username FROM cadastro_pendentes WHERE username = ? COLLATE NOCASE OR LOWER(TRIM(username)) = ?', 
+                       [usernameTrim, usernameTrim.toLowerCase()], (errPending, pendingUser) => {
                     if (errPending) {
                         console.error('Erro ao verificar username em cadastro_pendentes:', errPending.message);
                         db.run('DELETE FROM membros WHERE id = ?', [membroId], () => {});
                         return res.status(500).json({ error: 'Erro ao verificar cadastros pendentes: ' + errPending.message });
                     }
                     if (pendingUser) {
-                        console.log(`Username "${username}" já existe em cadastro_pendentes (ID: ${pendingUser.id}, username: ${pendingUser.username})`);
+                        console.log(`Username "${username}" já existe em cadastro_pendentes (ID: ${pendingUser.id}, username: "${pendingUser.username}")`);
                         // Se o username está em cadastro pendente, remover o membro criado e retornar erro
                         db.run('DELETE FROM membros WHERE id = ?', [membroId], () => {});
-                        return res.status(400).json({ error: 'Username já está em uso (cadastro pendente). Escolha outro.' });
+                        return res.status(400).json({ error: `Username já está em uso (cadastro pendente: "${pendingUser.username}"). Escolha outro.` });
                     }
                     
-                    console.log(`Username "${username}" disponível, criando usuário...`);
+                    // Verificação adicional: listar todos os usernames para debug
+                    db.all('SELECT id, username FROM usuarios', [], (errList, allUsers) => {
+                        if (errList) {
+                            console.error('Erro ao listar usuarios para debug:', errList.message);
+                        } else {
+                            console.log(`Total de usuarios no banco: ${allUsers.length}`);
+                            if (allUsers.length > 0) {
+                                console.log('Usuarios existentes:', allUsers.map(u => `"${u.username}"`).join(', '));
+                            }
+                        }
+                    });
+                    
+                    console.log(`Username "${usernameTrim}" disponível, criando usuário...`);
 
                     // Criptografar a senha
                     const hashedPassword = bcrypt.hashSync(password, 10);
@@ -1964,9 +1980,9 @@ app.post('/api/membros', (req, res) => {
                         userRole = 'membro'; // mantém como membro
                     }
 
-                    // Criar o usuário (usando o username original, não o normalizado)
+                    // Criar o usuário (usando o username trimado)
                     db.run('INSERT INTO usuarios (username, password, role) VALUES (?, ?, ?)', 
-                           [username.trim(), hashedPassword, userRole], function (errInsert) {
+                           [usernameTrim, hashedPassword, userRole], function (errInsert) {
                         if (errInsert) {
                             console.error('Erro ao inserir usuário:', errInsert.message);
                             console.error('Username tentado:', username);
@@ -1976,35 +1992,54 @@ app.post('/api/membros', (req, res) => {
                             
                             if (errInsert.message.includes('UNIQUE constraint failed')) {
                                 // Se deu UNIQUE constraint, fazer verificações finais em ambas as tabelas
-                                // Verificar em usuarios (case-insensitive)
-                                db.get('SELECT id, username FROM usuarios WHERE username = ? COLLATE NOCASE', [username.trim()], (errFinal, finalCheck) => {
-                                    if (errFinal) {
-                                        console.error('Erro na verificação final usuarios:', errFinal.message);
+                                console.error(`UNIQUE constraint failed para username: "${usernameTrim}"`);
+                                
+                                // Listar TODOS os usuarios para debug
+                                db.all('SELECT id, username FROM usuarios ORDER BY id', [], (errListAll, allUsersList) => {
+                                    if (!errListAll && allUsersList) {
+                                        console.log('=== DEBUG: Todos os usuarios no banco ===');
+                                        allUsersList.forEach(u => {
+                                            console.log(`  ID: ${u.id}, username: "${u.username}" (length: ${u.username.length})`);
+                                        });
+                                        console.log('==========================================');
                                     }
                                     
-                                    // Verificar também em cadastro_pendentes
-                                    db.get('SELECT id, username FROM cadastro_pendentes WHERE username = ? COLLATE NOCASE', [username.trim()], (errPendingFinal, pendingFinalCheck) => {
-                                        if (errPendingFinal) {
-                                            console.error('Erro na verificação final cadastro_pendentes:', errPendingFinal.message);
+                                    // Verificar em usuarios (case-insensitive e com diferentes variações)
+                                    db.all('SELECT id, username FROM usuarios WHERE username = ? OR username = ? COLLATE NOCASE OR LOWER(username) = ? OR TRIM(username) = ?', 
+                                           [usernameTrim, usernameTrim, usernameTrim.toLowerCase(), usernameTrim], (errFinal, finalChecks) => {
+                                        if (errFinal) {
+                                            console.error('Erro na verificação final usuarios:', errFinal.message);
                                         }
                                         
-                                        if (finalCheck) {
+                                        // Verificar também em cadastro_pendentes
+                                        db.all('SELECT id, username FROM cadastro_pendentes WHERE username = ? OR username = ? COLLATE NOCASE OR LOWER(username) = ? OR TRIM(username) = ?', 
+                                               [usernameTrim, usernameTrim, usernameTrim.toLowerCase(), usernameTrim], (errPendingFinal, pendingFinalChecks) => {
+                                            if (errPendingFinal) {
+                                                console.error('Erro na verificação final cadastro_pendentes:', errPendingFinal.message);
+                                            }
+                                            
+                                            if (finalChecks && finalChecks.length > 0) {
+                                                console.log('Usuarios encontrados na verificação final:', finalChecks);
+                                                return res.status(400).json({ 
+                                                    error: `Username já está em uso na tabela usuarios (encontrado: "${finalChecks[0].username}"). Escolha outro.`
+                                                });
+                                            }
+                                            if (pendingFinalChecks && pendingFinalChecks.length > 0) {
+                                                console.log('Cadastros pendentes encontrados na verificação final:', pendingFinalChecks);
+                                                return res.status(400).json({ 
+                                                    error: `Username já está em uso na tabela cadastro_pendentes (encontrado: "${pendingFinalChecks[0].username}"). Escolha outro.`
+                                                });
+                                            }
+                                            
+                                            // Se não encontrou em nenhuma tabela, pode ser problema de case sensitivity ou espaços
+                                            // Ou pode haver algum problema com o banco de dados
+                                            console.error(`UNIQUE constraint failed para "${usernameTrim}" mas não encontrado em nenhuma tabela!`);
+                                            console.error('Isso pode indicar um problema com a constraint UNIQUE do SQLite.');
                                             return res.status(400).json({ 
-                                                error: `Username já está em uso na tabela usuarios (encontrado: "${finalCheck.username}"). Escolha outro.`
+                                                error: 'Username já está em uso (possível conflito de maiúsculas/minúsculas ou problema no banco). Escolha outro.',
+                                                debug: 'Tente usar um username diferente ou contate o administrador',
+                                                username_tentado: usernameTrim
                                             });
-                                        }
-                                        if (pendingFinalCheck) {
-                                            return res.status(400).json({ 
-                                                error: `Username já está em uso na tabela cadastro_pendentes (encontrado: "${pendingFinalCheck.username}"). Escolha outro.`
-                                            });
-                                        }
-                                        
-                                        // Se não encontrou em nenhuma tabela, pode ser problema de case sensitivity ou espaços
-                                        // Ou pode haver algum problema com o banco de dados
-                                        console.error(`UNIQUE constraint failed para "${username}" mas não encontrado em nenhuma tabela!`);
-                                        return res.status(400).json({ 
-                                            error: 'Username já está em uso (possível conflito de maiúsculas/minúsculas ou problema no banco). Escolha outro.',
-                                            debug: 'Tente usar um username diferente ou contate o administrador'
                                         });
                                     });
                                 });
