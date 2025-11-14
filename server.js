@@ -2959,6 +2959,23 @@ app.put('/api/usuarios/:id/ativar', authenticateToken, (req, res) => {
     });
 });
 
+// Recusar (excluir) um cadastro pendente
+app.delete('/api/usuarios/:id/recusar', authenticateToken, (req, res) => {
+    const allowed = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowed.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas admin, Grande Mestre ou Mestre dos Ventos podem recusar usuários.' });
+    }
+    const { id } = req.params;
+    db.get('SELECT * FROM cadastro_pendentes WHERE id = ?', [id], (err, pend) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!pend) return res.status(404).json({ error: 'Cadastro pendente não encontrado' });
+        db.run('DELETE FROM cadastro_pendentes WHERE id = ?', [id], function(delErr) {
+            if (delErr) return res.status(500).json({ error: delErr.message });
+            res.json({ message: 'Cadastro recusado com sucesso' });
+        });
+    });
+});
+
 // Endpoint para excluir item específico do inventário família
 app.delete('/api/inventario-familia/item/:nome', authenticateToken, (req, res) => {
     const { nome } = req.params;
