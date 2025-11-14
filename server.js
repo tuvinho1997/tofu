@@ -10,6 +10,12 @@ const bcrypt = require('bcryptjs');
 // assumirão apenas id/quantidade/preço/imagem.
 let inventarioFamiliaNameColumn = null;
 let inventarioFamiliaHasCategoria = false;
+// Flags para detectar colunas adicionais na tabela de imagens. Alguns bancos
+// antigos possuem as colunas `tipo` e `descricao` com restrição NOT NULL,
+// enquanto bancos mais novos podem não ter essas colunas. Estes flags
+// serão inicializados em initializeDatabase() usando PRAGMA table_info.
+let imagensHasTipo = false;
+let imagensHasDescricao = false;
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const path = require('path');
@@ -277,6 +283,19 @@ function initializeDatabase() {
         }
         inventarioFamiliaHasCategoria = !!colCategoria;
 
+        // Se a coluna categoria não existir, adiciona-a dinamicamente. Isso
+        // garante que possamos categorizar os itens no inventário da família.
+        if (!colCategoria) {
+            db.run('ALTER TABLE inventario_familia ADD COLUMN categoria TEXT', (altErr) => {
+                if (altErr) {
+                    console.warn('Não foi possível adicionar a coluna categoria em inventario_familia:', altErr.message);
+                } else {
+                    console.log('Coluna categoria adicionada à tabela inventario_familia');
+                    inventarioFamiliaHasCategoria = true;
+                }
+            });
+        }
+
         // Garante que a coluna imagem exista na tabela inventario_familia
         const colImagem = rows.find(col => col.name === 'imagem');
         if (!colImagem) {
@@ -326,6 +345,20 @@ function initializeDatabase() {
     db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_imagens_nome ON imagens(nome)', (err) => {
         if (err) {
             console.error('Erro ao criar índice único em imagens:', err.message);
+        }
+    });
+
+    // Detecta colunas adicionais em "imagens" (tipo, descricao) para adaptar
+    // rotas de upload conforme a estrutura do banco existente. Muitos bancos
+    // antigos possuem as colunas `tipo` e `descricao` com NOT NULL e sem
+    // valores padrão. Esses flags (imagensHasTipo, imagensHasDescricao) são
+    // usados no endpoint de upload de imagens para montar dinamicamente a
+    // consulta de inserção. Caso novas colunas sejam adicionadas no futuro,
+    // considere expandir esta verificação.
+    db.all('PRAGMA table_info(imagens)', (errImgs, imgCols) => {
+        if (!errImgs && Array.isArray(imgCols)) {
+            imagensHasTipo = imgCols.some(col => col.name === 'tipo');
+            imagensHasDescricao = imgCols.some(col => col.name === 'descricao');
         }
     });
 
@@ -1147,14 +1180,13 @@ app.put('/api/encomendas/:id', authenticateToken, (req, res) => {
 
 app.delete('/api/encomendas/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
-
-    // Somente administradores ou os cargos mais altos podem excluir encomendas
+    // Lista de papéis com permissão irrestrita para excluir encomendas
     const allowedRolesDeleteEncomenda = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
-    if (!req.user || !allowedRolesDeleteEncomenda.includes(req.user.role)) {
-        return res.status(403).json({ error: 'Acesso negado. Apenas administradores, Grande Mestres ou Mestres dos Ventos podem excluir encomendas.' });
-    }
 
-    // Primeiro, obtém os dados da encomenda para controle de estoque
+    // Buscar a encomenda antes de decidir se o usuário pode excluí‑la. Isto
+    // permite que encomendas com status "cancelado" sejam removidas por
+    // qualquer usuário autenticado, enquanto encomendas em outros estados
+    // continuam restritas aos papéis de maior hierarquia.
     db.get('SELECT status, municao_5mm, municao_9mm, municao_762mm, municao_12cbc FROM encomendas WHERE id = ?', [id], (errSelect, row) => {
         if (errSelect) {
             return res.status(500).json({ error: errSelect.message });
@@ -1163,38 +1195,50 @@ app.delete('/api/encomendas/:id', authenticateToken, (req, res) => {
             return res.status(404).json({ error: 'Encomenda não encontrada' });
         }
 
-        // Se a encomenda estava entregue, devolver ao estoque
+        const userRole = req.user && req.user.role;
+        const isHighRole = userRole && allowedRolesDeleteEncomenda.includes(userRole);
+
+        // Se não for papel privilegiado e a encomenda não estiver cancelada,
+        // negar acesso. Isso significa que qualquer papel poderá excluir
+        // encomendas canceladas, mas somente papéis privilegiados poderão
+        // remover encomendas em outros estados.
+        if (!isHighRole && row.status !== 'cancelado') {
+            return res.status(403).json({ error: 'Acesso negado. Apenas administradores, Grande Mestres ou Mestres dos Ventos podem excluir esta encomenda.' });
+        }
+
+        // Caso a encomenda esteja no status "entregue", devolve o estoque antes de excluir
+        const processDelete = () => {
+            db.run('DELETE FROM encomendas WHERE id = ?', [id], function (err) {
+                if (err) {
+                    return res.status(500).json({ error: err.message });
+                }
+                // Mensagem diferenciada conforme status original
+                const mensagem = row.status === 'entregue'
+                    ? 'Encomenda excluída e estoque devolvido com sucesso'
+                    : 'Encomenda excluída com sucesso';
+                res.json({ message: mensagem });
+                // Após a exclusão, verificar se outras encomendas podem ser marcadas como prontas
+                verificarEncomendasProntas().catch(err => {
+                    console.error('Erro ao verificar encomendas prontas após exclusão:', err);
+                });
+            });
+        };
         if (row.status === 'entregue') {
-            devolverEstoquePorEncomenda(row.municao_5mm || 0, row.municao_9mm || 0, row.municao_762mm || 0, row.municao_12cbc || 0)
-                .then(() => {
-                    // Após devolver ao estoque, exclui a encomenda
-                    db.run('DELETE FROM encomendas WHERE id = ?', [id], function (err) {
-                        if (err) {
-                            return res.status(500).json({ error: err.message });
-                        }
-                        res.json({ message: 'Encomenda excluída e estoque devolvido com sucesso' });
-                        // Verifica se outras encomendas podem ser marcadas como prontas
-                        verificarEncomendasProntas().catch(err => {
-                            console.error('Erro ao verificar encomendas prontas após exclusão:', err);
-                        });
-                    });
-                })
+            // Devolve estoque e depois exclui
+            devolverEstoquePorEncomenda(
+                row.municao_5mm || 0,
+                row.municao_9mm || 0,
+                row.municao_762mm || 0,
+                row.municao_12cbc || 0
+            )
+                .then(processDelete)
                 .catch(errDevolver => {
                     console.error('Erro ao devolver estoque:', errDevolver);
                     res.status(500).json({ error: 'Erro ao devolver estoque: ' + errDevolver.message });
                 });
         } else {
-            // Encomenda não estava entregue, apenas exclui
-            db.run('DELETE FROM encomendas WHERE id = ?', [id], function (err) {
-                if (err) {
-                    return res.status(500).json({ error: err.message });
-                }
-                res.json({ message: 'Encomenda excluída com sucesso' });
-                // Verifica se outras encomendas podem ser marcadas como prontas
-                verificarEncomendasProntas().catch(err => {
-                    console.error('Erro ao verificar encomendas prontas após exclusão:', err);
-                });
-            });
+            // Para demais statuses (incluindo cancelado), apenas exclui
+            processDelete();
         }
     });
 });
@@ -2099,6 +2143,21 @@ app.delete('/api/familias/:id', (req, res) => {
 });
 
 // Rotas de inventário família
+// Retorna a lista de categorias distintas do inventário da família. Se a tabela
+// não possuir a coluna categoria, retorna um array vazio. É necessário
+// autenticar para acessar este endpoint.
+app.get('/api/inventario-familia/categorias', authenticateToken, (req, res) => {
+    if (!inventarioFamiliaHasCategoria) {
+        return res.json([]);
+    }
+    db.all('SELECT DISTINCT categoria FROM inventario_familia WHERE categoria IS NOT NULL', (err, rows) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        const categorias = rows.map(r => r.categoria).filter(Boolean).sort();
+        res.json(categorias);
+    });
+});
 app.get('/api/inventario-familia', authenticateToken, (req, res) => {
     // Seleciona os itens do inventário família ordenados pelo nome, se existir.
     const orderBy = inventarioFamiliaNameColumn ? `ORDER BY ${inventarioFamiliaNameColumn}` : 'ORDER BY id';
@@ -2292,6 +2351,59 @@ app.delete('/api/inventario-familia/:id', authenticateToken, (req, res) => {
     });
 });
 
+// Atualizar múltiplos itens do inventário da família de uma vez.
+// Esta rota aceita um array de objetos com `id` e `quantidade`, e ajusta
+// cada item individualmente. É útil para a funcionalidade de inventário em massa
+// presente no front-end da aba Inventário Família. Apenas usuários
+// autenticados podem realizar a operação; políticas adicionais de papel
+// podem ser aplicadas no front‑end.
+app.post('/api/inventario-familia/atualizar-multiplos', authenticateToken, (req, res) => {
+    const { itens } = req.body;
+    if (!Array.isArray(itens) || itens.length === 0) {
+        return res.status(400).json({ error: 'Lista de itens é obrigatória e deve ser um array' });
+    }
+    let processados = 0;
+    let erros = [];
+    let sucessos = 0;
+    itens.forEach((item, index) => {
+        const { id, quantidade } = item;
+        // Validação básica dos campos
+        if (!id || quantidade === undefined || quantidade === null) {
+            erros.push(`Item ${index + 1}: dados incompletos`);
+            processados++;
+            if (processados === itens.length) {
+                finalizarResposta();
+            }
+            return;
+        }
+        // Atualiza a quantidade do item correspondente
+        db.run('UPDATE inventario_familia SET quantidade = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE id = ?',
+            [quantidade, id], function (err) {
+                if (err) {
+                    erros.push(`Item ${index + 1} (ID ${id}): ${err.message}`);
+                } else if (this.changes > 0) {
+                    sucessos++;
+                } else {
+                    erros.push(`Item ${index + 1} (ID ${id}): não encontrado`);
+                }
+                processados++;
+                if (processados === itens.length) {
+                    finalizarResposta();
+                }
+            }
+        );
+    });
+    function finalizarResposta() {
+        if (erros.length === 0) {
+            res.json({ message: `${sucessos} itens atualizados com sucesso`, sucessos });
+        } else if (sucessos === 0) {
+            res.status(400).json({ error: 'Nenhum item foi atualizado', erros });
+        } else {
+            res.json({ message: `${sucessos} itens atualizados, ${erros.length} com erro`, sucessos, erros });
+        }
+    }
+});
+
 // Rotas de requisições família
 app.get('/api/requisicoes-familia', (req, res) => {
     // Seleciona requisições junto com dados do inventário família. Usa a coluna de nome
@@ -2410,12 +2522,44 @@ app.post('/api/imagens/upload', upload.single('imagem'), (req, res) => {
         return res.status(400).json({ error: 'Nenhuma imagem foi enviada' });
     }
 
-    const { originalname, filename, path: filepath } = req.file;
+    // Recupera informações do arquivo enviado pelo multer
+    const { originalname, mimetype, path: filepath } = req.file;
     const relativePath = filepath.replace('static/', '');
 
-    db.run('INSERT INTO imagens (nome, caminho) VALUES (?, ?)', [originalname, relativePath], function (err) {
+    /*
+     * Constrói dinamicamente a consulta de inserção baseada nas colunas
+     * detectadas na tabela de imagens. Alguns bancos possuem as
+     * colunas `tipo` e `descricao` com restrição NOT NULL, portanto
+     * é necessário fornecer valores para elas. Usamos o mimetype do
+     * arquivo (ex.: image/png) ou a extensão como valor do campo `tipo`.
+     */
+    const cols = ['nome', 'caminho'];
+    const vals = [originalname, relativePath];
+    if (imagensHasTipo) {
+        cols.push('tipo');
+        // Extrai o tipo do mimetype (ex.: image/png -> png) ou da extensão
+        let tipo = '';
+        if (mimetype && typeof mimetype === 'string' && mimetype.includes('/')) {
+            tipo = mimetype.split('/')[1] || '';
+        }
+        if (!tipo) {
+            const ext = path.extname(originalname) || '';
+            tipo = ext.startsWith('.') ? ext.slice(1) : ext;
+        }
+        vals.push(tipo || '');
+    }
+    if (imagensHasDescricao) {
+        cols.push('descricao');
+        // A descrição pode ser enviada no body como campo `descricao` do form-data
+        // ou permanece vazia por padrão.
+        const descricao = req.body && typeof req.body.descricao === 'string' ? req.body.descricao : '';
+        vals.push(descricao);
+    }
+    const placeholders = cols.map(() => '?').join(', ');
+    const insertQuery = `INSERT INTO imagens (${cols.join(', ')}) VALUES (${placeholders})`;
+    db.run(insertQuery, vals, function (err) {
         if (err) {
-            if (err.message.includes('UNIQUE constraint failed')) {
+            if (err.message && err.message.includes('UNIQUE constraint failed')) {
                 return res.status(400).json({ error: 'Imagem com este nome já existe' });
             }
             return res.status(500).json({ error: err.message });
