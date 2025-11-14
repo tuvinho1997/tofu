@@ -828,7 +828,8 @@ app.post('/api/verificar-prontos', (req, res) => {
 // Rota para limpar duplicatas do estoque manualmente
 app.post('/api/limpar-duplicatas', authenticateToken, (req, res) => {
     const role = req.user && req.user.role;
-    if (role !== 'admin' && role !== 'lider') {
+    // Apenas administradores, Grande Mestres ou Mestres dos Ventos podem limpar duplicatas
+    if (!['admin', 'grande-mestre', 'mestre-dos-ventos'].includes(role)) {
         return res.status(403).json({ error: 'Acesso negado' });
     }
     
@@ -879,6 +880,12 @@ app.post('/api/encomendas', authenticateToken, async (req, res) => {
 app.put('/api/encomendas/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
     const { cliente, familia, telefone_cliente, municao_5mm, municao_9mm, municao_762mm, municao_12cbc, valor_total, comissao, status } = req.body;
+
+    // Somente administradores ou os cargos mais altos podem atualizar encomendas
+    const allowedRolesUpdateEncomenda = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRolesUpdateEncomenda.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas administradores, Grande Mestres ou Mestres dos Ventos podem atualizar encomendas.' });
+    }
 
     // Função auxiliar para enviar resposta e executar verificação de encomendas prontas.
     // Isso é necessário porque após alterar uma encomenda (especialmente o status),
@@ -1121,6 +1128,12 @@ app.put('/api/encomendas/:id', authenticateToken, (req, res) => {
 
 app.delete('/api/encomendas/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
+
+    // Somente administradores ou os cargos mais altos podem excluir encomendas
+    const allowedRolesDeleteEncomenda = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRolesDeleteEncomenda.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas administradores, Grande Mestres ou Mestres dos Ventos podem excluir encomendas.' });
+    }
 
     // Primeiro, obtém os dados da encomenda para controle de estoque
     db.get('SELECT status, municao_5mm, municao_9mm, municao_762mm, municao_12cbc FROM encomendas WHERE id = ?', [id], (errSelect, row) => {
@@ -1498,7 +1511,8 @@ app.get('/api/config/commission-rate', (req, res) => {
 // Atualiza a taxa de comissão. Somente administradores ou líderes podem definir o percentual.
 app.put('/api/config/commission-rate', authenticateToken, (req, res) => {
     const role = req.user && req.user.role;
-    if (role !== 'admin' && role !== 'lider') {
+    // Apenas administradores, Grande Mestres ou Mestres dos Ventos podem alterar a taxa de comissão
+    if (!['admin', 'grande-mestre', 'mestre-dos-ventos'].includes(role)) {
         return res.status(403).json({ error: 'Acesso negado' });
     }
     const { rate } = req.body;
@@ -1787,6 +1801,12 @@ app.put('/api/rotas/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
     const { quantidade, status } = req.body;
 
+    // Somente administradores ou os cargos mais altos podem atualizar rotas
+    const allowedRolesUpdateRota = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRolesUpdateRota.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas administradores, Grande Mestres ou Mestres dos Ventos podem atualizar rotas.' });
+    }
+
     if (!quantidade || !status) {
         return res.status(400).json({ error: 'Quantidade e status são obrigatórios' });
     }
@@ -1958,6 +1978,12 @@ function adicionarMateriaisPorRota(qtd) {
 
 app.delete('/api/rotas/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
+
+    // Somente administradores ou os cargos mais altos podem excluir rotas
+    const allowedRolesDeleteRota = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRolesDeleteRota.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas administradores, Grande Mestres ou Mestres dos Ventos podem excluir rotas.' });
+    }
 
     // Primeiro, verificar se a rota existe e recuperar dados para controle de estoque
     db.get('SELECT status, quantidade FROM rotas WHERE id = ?', [id], (errSelect, rota) => {
@@ -2292,6 +2318,14 @@ app.put('/api/requisicoes-familia/:id', (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
 
+    // Somente cargos administrativos ou de topo podem alterar o status de uma requisição de materiais.
+    // Usuários de hierarquias 3 a 6 podem criar requisições, mas não devem aprová-las ou cancelá-las.
+    const allowedRolesAlterarRequisicao = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    const userRole = req.user && req.user.role;
+    if (!userRole || !allowedRolesAlterarRequisicao.includes(userRole)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas administradores, Grande Mestres ou Mestres dos Ventos podem alterar o status de requisições.' });
+    }
+
     if (status === 'aprovada') {
         // Buscar dados da requisição
         db.get('SELECT item_id, quantidade FROM requisicoes_familia WHERE id = ?', [id], (err, req_row) => {
@@ -2480,6 +2514,12 @@ app.put('/api/rotas/:id/pagamento', authenticateToken, (req, res) => {
     const { id } = req.params;
     const { pagante_id } = req.body;
 
+    // Somente administradores ou os cargos mais altos podem registrar pagamentos de rotas
+    const allowedRolesPagamento = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRolesPagamento.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas administradores, Grande Mestres ou Mestres dos Ventos podem registrar pagamentos de rotas.' });
+    }
+
     if (!pagante_id) {
         return res.status(400).json({ error: 'ID do pagante é obrigatório' });
     }
@@ -2496,7 +2536,7 @@ app.put('/api/rotas/:id/pagamento', authenticateToken, (req, res) => {
             return res.status(400).json({ error: 'Só é possível registrar pagamento para rotas entregues' });
         }
 
-        // Verificar se o usuário pagante existe e é líder ou admin
+        // Verificar se o usuário pagante existe e tem permissão para registrar pagamentos
         db.get('SELECT username, role FROM usuarios WHERE id = ?', [pagante_id], (errUser, usuario) => {
             if (errUser) {
                 return res.status(500).json({ error: errUser.message });
@@ -2504,8 +2544,9 @@ app.put('/api/rotas/:id/pagamento', authenticateToken, (req, res) => {
             if (!usuario) {
                 return res.status(404).json({ error: 'Usuário pagante não encontrado' });
             }
-            if (usuario.role !== 'lider' && usuario.role !== 'admin') {
-                return res.status(403).json({ error: 'Apenas líderes e administradores podem registrar pagamentos' });
+            const rolesPagantesPermitidos = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+            if (!rolesPagantesPermitidos.includes(usuario.role)) {
+                return res.status(403).json({ error: 'Apenas administradores, Grande Mestres ou Mestres dos Ventos podem registrar pagamentos' });
             }
 
             // Registrar o pagamento
@@ -2573,13 +2614,51 @@ app.get('/api/usuarios', authenticateToken, (req, res) => {
     });
 });
 
+// Endpoint para alterar o cargo de um membro.
+// Apenas usuários com papel admin, líder ou vice-líder podem alterar cargos.
+app.put('/api/membros/:id/cargo', authenticateToken, (req, res) => {
+    const { id } = req.params;
+    const { cargo } = req.body;
+
+    // Verificar se o usuário tem permissão para alterar cargos
+    // Permitem-se alterações apenas para administradores e os cargos mais altos (Grande Mestre e Mestre dos Ventos)
+    const allowedRoles = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas admin, líder e vice-líder podem alterar cargos.' });
+    }
+
+    // Validar cargo fornecido (lista de cargos válidos)
+    const validCargos = [
+        'grande-mestre',
+        'mestre-dos-ventos',
+        'guardiao-do-dragao',
+        'mestre-das-sombras',
+        'monge-guerreiro',
+        'acolito'
+    ];
+    if (cargo && !validCargos.includes(cargo)) {
+        return res.status(400).json({ error: 'Cargo inválido' });
+    }
+
+    // Atualiza o cargo do membro na tabela membros
+    db.run('UPDATE membros SET cargo = ? WHERE id = ?', [cargo, id], function (err) {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        if (this.changes === 0) {
+            return res.status(404).json({ error: 'Membro não encontrado' });
+        }
+        res.json({ message: 'Cargo atualizado com sucesso' });
+    });
+});
+
 // Endpoint para excluir item específico do inventário família
 app.delete('/api/inventario-familia/item/:nome', authenticateToken, (req, res) => {
     const { nome } = req.params;
     
-    // Verificar se o usuário é administrador ou líder
-    if (req.user.role !== 'admin' && req.user.role !== 'lider') {
-        return res.status(403).json({ error: 'Acesso negado. Apenas administradores e líderes podem excluir itens.' });
+    // Verificar se o usuário é administrador ou pertence aos cargos mais altos
+    if (!['admin', 'grande-mestre', 'mestre-dos-ventos'].includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas administradores, Grande Mestres ou Mestres dos Ventos podem excluir itens.' });
     }
 
     console.log(`🗑️ Tentando excluir item: ${nome}`);
