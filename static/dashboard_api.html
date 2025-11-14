@@ -1480,6 +1480,14 @@
                     </select>
                 </div>
                 <div class="form-group">
+                    <label>Usuário (Login) - Opcional</label>
+                    <input type="text" id="membroUsername" placeholder="Deixe em branco se não quiser criar login">
+                </div>
+                <div class="form-group">
+                    <label>Senha - Opcional</label>
+                    <input type="password" id="membroPassword" placeholder="Deixe em branco se não quiser criar login">
+                </div>
+                <div class="form-group">
                     <label>Foto do Personagem (opcional)</label>
                     <input type="file" id="membroImagem" accept="image/*">
                 </div>
@@ -4906,8 +4914,16 @@ let editingEncomendaId = null;
             const rg = document.getElementById('membroRG').value.trim();
             const telefone = document.getElementById('membroTelefone').value.trim();
             const cargo = document.getElementById('membroCargo').value;
+            const username = document.getElementById('membroUsername').value.trim();
+            const password = document.getElementById('membroPassword').value;
             const imagemInput = document.getElementById('membroImagem');
             let imagemPath = null;
+            
+            // Validar se username e senha foram fornecidos juntos
+            if ((username && !password) || (!username && password)) {
+                alert('Por favor, forneça tanto o usuário quanto a senha, ou deixe ambos em branco.');
+                return;
+            }
             
             try {
                 // Se o usuário selecionou uma imagem, faça upload antes de cadastrar o membro
@@ -4929,11 +4945,17 @@ let editingEncomendaId = null;
                     imagemPath = imgData.caminho;
                 }
 
-                // Agora envia os dados do membro com o campo imagem (pode ser null)
+                // Agora envia os dados do membro com o campo imagem (pode ser null) e credenciais (opcionais)
+                const payload = { nome, rg, telefone, cargo, imagem: imagemPath };
+                if (username && password) {
+                    payload.username = username;
+                    payload.password = password;
+                }
+                
                 const response = await fetch(`${API_BASE}/membros`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ nome, rg, telefone, cargo, imagem: imagemPath })
+                    body: JSON.stringify(payload)
                 });
                 const data = await response.json();
                 if (response.ok) {
