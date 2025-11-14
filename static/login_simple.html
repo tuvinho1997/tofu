@@ -125,6 +125,26 @@
             box-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
         }
 
+        .form-group input[type="file"] {
+            padding: 10px;
+            cursor: pointer;
+        }
+
+        .form-group input[type="file"]::file-selector-button {
+            padding: 8px 15px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            cursor: pointer;
+            margin-right: 10px;
+            transition: all 0.3s ease;
+        }
+
+        .form-group input[type="file"]::file-selector-button:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
         .login-btn {
             width: 100%;
             padding: 15px;
@@ -218,6 +238,10 @@
                     <label for="registerPassword">Senha</label>
                     <input type="password" id="registerPassword" name="registerPassword" required>
                 </div>
+                <div class="form-group">
+                    <label for="registerImagem">Foto do Personagem (opcional)</label>
+                    <input type="file" id="registerImagem" name="registerImagem" accept="image/*">
+                </div>
                 <button type="submit" class="login-btn">Cadastrar</button>
             </form>
             <p style="color: rgba(255,255,255,0.8); font-size: 14px; text-align:center; margin-top: 15px;">
@@ -292,29 +316,55 @@
             const telefone = document.getElementById('registerTelefone').value;
             const username = document.getElementById('registerUsername').value;
             const password = document.getElementById('registerPassword').value;
-            try {
-                const response = await fetch('/api/auth/register', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ username, password, nome, rg, telefone })
-                });
-                const data = await response.json();
-                if (response.ok) {
-                    alert(data.message || 'Cadastro realizado. Aguarde aprovação.');
-                    // Volta para o login
-                    document.getElementById('registerFormContainer').style.display = 'none';
-                    document.getElementById('loginFormContainer').style.display = 'block';
-                    document.getElementById('errorMessage').style.display = 'none';
-                    // Limpa campos de cadastro
-                    document.getElementById('registerForm').reset();
-                } else {
-                    showError(data.error || 'Erro ao cadastrar');
+            const imagemInput = document.getElementById('registerImagem');
+            const file = imagemInput && imagemInput.files && imagemInput.files[0];
+            
+            const sendRequest = async (imagemBase64) => {
+                try {
+                    const payload = { username, password, nome, rg, telefone };
+                    if (imagemBase64) {
+                        payload.imagem = imagemBase64;
+                    }
+                    
+                    const response = await fetch('/api/auth/register', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(payload)
+                    });
+                    const data = await response.json();
+                    if (response.ok) {
+                        alert(data.message || 'Cadastro realizado. Aguarde aprovação.');
+                        // Volta para o login
+                        document.getElementById('registerFormContainer').style.display = 'none';
+                        document.getElementById('loginFormContainer').style.display = 'block';
+                        document.getElementById('errorMessage').style.display = 'none';
+                        // Limpa campos de cadastro
+                        document.getElementById('registerForm').reset();
+                    } else {
+                        showError(data.error || 'Erro ao cadastrar');
+                    }
+                } catch (error) {
+                    console.error('Erro:', error);
+                    showError('Erro de conexão. Tente novamente.');
                 }
-            } catch (error) {
-                console.error('Erro:', error);
-                showError('Erro de conexão. Tente novamente.');
+            };
+            
+            // Se houver arquivo, lê como DataURL e envia. Caso contrário, envia imediatamente.
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(evt) {
+                    const base64 = evt.target.result;
+                    sendRequest(base64);
+                };
+                reader.onerror = function() {
+                    // Em caso de erro ao ler, envia sem imagem
+                    sendRequest(null);
+                };
+                reader.readAsDataURL(file);
+            } else {
+                sendRequest(null);
             }
         });
     </script>
