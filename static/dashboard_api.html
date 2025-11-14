@@ -2571,6 +2571,7 @@ let editingEncomendaId = null;
                 tr.appendChild(tdCargo);
                 // Ações
                 const tdAcoes = document.createElement('td');
+                // Botão Aprovar
                 const btnAprovar = document.createElement('button');
                 btnAprovar.textContent = 'Aprovar';
                 btnAprovar.className = 'btn-primary';
@@ -2581,6 +2582,19 @@ let editingEncomendaId = null;
                     aprovarUsuario(uid, selectCargo.value);
                 };
                 tdAcoes.appendChild(btnAprovar);
+                // Botão Recusar
+                const btnRecusar = document.createElement('button');
+                btnRecusar.textContent = 'Recusar';
+                btnRecusar.className = 'btn-secondary';
+                // define cores e espaçamento para diferenciar a ação de recusa
+                btnRecusar.style.marginLeft = '5px';
+                btnRecusar.style.background = '#e74c3c';
+                btnRecusar.style.color = 'white';
+                btnRecusar.onclick = () => {
+                    const uid = p.id || p.user_id;
+                    recusarUsuario(uid);
+                };
+                tdAcoes.appendChild(btnRecusar);
                 tr.appendChild(tdAcoes);
                 tbody.appendChild(tr);
             });
@@ -2612,6 +2626,37 @@ let editingEncomendaId = null;
             } catch (error) {
                 console.error('Erro:', error);
                 alert('Erro ao aprovar usuário');
+            }
+        }
+
+        // Recusar usuário pendente
+        async function recusarUsuario(userId) {
+            if (!confirm('Tem certeza que deseja recusar este usuário?')) return;
+            try {
+                const response = await fetch(`${API_BASE}/usuarios/${userId}/recusar`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Authorization': 'Bearer ' + localStorage.getItem('authToken')
+                    }
+                });
+                let data = {};
+                try {
+                    data = await response.json();
+                } catch (e) {
+                    // ignora se não for JSON
+                }
+                if (response.ok) {
+                    alert('Cadastro recusado com sucesso');
+                    // Recarrega listas e atualiza dashboard
+                    loadMembros();
+                    loadPendentes();
+                    updateDashboardStats();
+                } else {
+                    alert(data.error || 'Erro ao recusar usuário');
+                }
+            } catch (error) {
+                console.error('Erro:', error);
+                alert('Erro ao recusar usuário');
             }
         }
 
@@ -6710,6 +6755,131 @@ let editingEncomendaId = null;
             return resp.json();
         }
 
+        /**
+         * Variável global para armazenar o ID do item atualmente em edição
+         * no inventário da família. Usada por submitEditItemFamilia() para
+         * identificar qual item deve ser atualizado.
+         */
+        let currentEditItemFamiliaId = null;
+
+        /**
+         * Abre o modal de edição de um item no inventário da família.
+         * Carrega as categorias disponíveis, preenche os campos com os dados
+         * existentes do item e exibe o modal. Esta função é declarada no
+         * escopo global para que possa ser chamada a partir dos botões de
+         * edição nos cartões de inventário.
+         * @param {number} id Identificador do item no banco de dados
+         */
+        function openEditItemFamilia(id) {
+            currentEditItemFamiliaId = id;
+            const catSelect = document.getElementById('editItemCategoria');
+            if (catSelect) {
+                catSelect.innerHTML = '<option value="">Selecione a categoria...</option>';
+                (async () => {
+                    try {
+                        const token = localStorage.getItem('authToken');
+                        const resp = await fetch(`${API_BASE}/inventario-familia/categorias`, {
+                            headers: { 'Authorization': `Bearer ${token || ''}` }
+                        });
+                        const cats = await resp.json();
+                        if (Array.isArray(cats)) {
+                            cats.forEach(cat => {
+                                const opt = document.createElement('option');
+                                opt.value = cat;
+                                opt.textContent = cat;
+                                catSelect.appendChild(opt);
+                            });
+                        }
+                    } catch (err) {
+                        console.error('Erro ao carregar categorias do inventário:', err);
+                    }
+                })();
+            }
+            const item = Array.isArray(inventarioFamilia) ? inventarioFamilia.find(it => it.id === id) : null;
+            if (!item) {
+                alert('Item não encontrado');
+                return;
+            }
+            const nomeItem = item.nome || item.item || '';
+            document.getElementById('editItemNome').value = nomeItem;
+            document.getElementById('editItemQuantidade').value = item.quantidade;
+            document.getElementById('editItemPreco').value = item.preco || '';
+            setTimeout(() => {
+                if (catSelect && item.categoria) {
+                    catSelect.value = item.categoria;
+                }
+            }, 200);
+            const imgInput = document.getElementById('editItemImagem');
+            if (imgInput) imgInput.value = '';
+            openModal('editItemFamiliaModal');
+        }
+
+        /**
+         * Envia as alterações de um item do inventário da família para o servidor.
+         * Se uma nova imagem for selecionada, primeiro faz upload da imagem,
+         * depois inclui o caminho da imagem no payload. Ao finalizar, recarrega
+         * o inventário e fecha o modal.
+         */
+        async function submitEditItemFamilia() {
+            if (!currentEditItemFamiliaId) {
+                alert('Nenhum item selecionado para edição');
+                return;
+            }
+            const categoria = document.getElementById('editItemCategoria').value.trim();
+            const nome = document.getElementById('editItemNome').value.trim();
+            const qtdStr = document.getElementById('editItemQuantidade').value;
+            const precoStr = document.getElementById('editItemPreco').value;
+            const quantidade = parseInt(qtdStr);
+            const preco = precoStr !== '' ? parseFloat(precoStr) : null;
+            if (!nome || isNaN(quantidade) || quantidade < 0) {
+                alert('Preencha os campos obrigatórios corretamente');
+                return;
+            }
+            try {
+                let imagemPath;
+                const imgInput = document.getElementById('editItemImagem');
+                if (imgInput && imgInput.files && imgInput.files[0]) {
+                    const imgForm = new FormData();
+                    imgForm.append('imagem', imgInput.files[0]);
+                    const imgResp = await fetch(`${API_BASE}/imagens/upload`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${localStorage.getItem('authToken') || ''}`
+                        },
+                        body: imgForm
+                    });
+                    const imgData = await imgResp.json();
+                    if (!imgResp.ok) {
+                        throw new Error(imgData.error || 'Erro ao enviar imagem do item');
+                    }
+                    imagemPath = imgData.caminho;
+                }
+                const payload = {
+                    categoria: categoria || undefined,
+                    item: nome,
+                    quantidade,
+                    preco: preco !== null ? preco : undefined,
+                    imagem: imagemPath
+                };
+                const response = await fetch(`${API_BASE}/inventario-familia/${currentEditItemFamiliaId}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+                    },
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'Erro ao atualizar item');
+                }
+                alert('Item atualizado com sucesso');
+                closeModal('editItemFamiliaModal');
+                loadInventarioFamilia();
+            } catch (error) {
+                alert(error.message);
+            }
+        }
     </script>
 </body>
 </html>
