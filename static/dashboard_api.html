@@ -844,6 +844,11 @@
                         </label>
                     </div>
                     <div style="margin-bottom:10px;">
+                        <label>Imagem do Item:<br>
+                            <input type="file" id="addItemImagem" accept="image/*" style="width:100%; padding:4px;">
+                        </label>
+                    </div>
+                    <div style="margin-bottom:10px;">
                         <label>Motivo da alteração:<br>
                             <textarea id="addItemMotivo" placeholder="Descreva o motivo da alteração no estoque" style="width:100%; padding:4px; height:60px; resize:vertical;" required></textarea>
                         </label>
@@ -1334,6 +1339,10 @@
                         <option value="mestre-dos-ventos">Mestre dos Ventos</option>
                         <option value="grande-mestre">Grande Mestre</option>
                     </select>
+                </div>
+                <div class="form-group">
+                    <label>Foto do Personagem (opcional)</label>
+                    <input type="file" id="membroImagem" accept="image/*">
                 </div>
                 <button type="submit" class="btn-primary">Cadastrar Membro</button>
             </form>
@@ -1910,14 +1919,11 @@ let editingEncomendaId = null;
                 if (userBadge && user.role) {
                     userBadge.textContent = user.role.toUpperCase();
                 }
-                // Exibe a aba Organograma apenas para administradores, Grande Mestre ou Mestre dos Ventos
+                // A aba Organograma é visível para todos os cargos. Ela apenas exibe a hierarquia;
+                // usuários de cargos mais baixos não podem editar cargos através desta aba.
                 const navOrganograma = document.getElementById('navOrganograma');
                 if (navOrganograma) {
-                    if (['admin','grande-mestre','mestre-dos-ventos'].includes(user.role)) {
-                        navOrganograma.style.display = 'inline-block';
-                    } else {
-                        navOrganograma.style.display = 'none';
-                    }
+                    navOrganograma.style.display = 'inline-block';
                 }
 
                 // Ajusta abas visíveis conforme o papel do usuário
@@ -1938,6 +1944,12 @@ let editingEncomendaId = null;
          */
         function adjustTabsForRole(role) {
             const lowRoles = ['guardiao-do-dragao', 'mestre-das-sombras', 'monge-guerreiro', 'acolito'];
+            // Para cargos de hierarquia inferior, permitimos apenas as abas de Rotas e Encomendas.
+            // A aba de Organograma é tratada separadamente (sempre exibida) e as demais
+            // como Inventário, Membros, Estoque, Imagens e Relatórios são ocultadas.
+            // Para cargos de hierarquia inferior, permitimos as abas de Rotas,
+            // Encomendas e Inventário da Família. A aba Organograma é tratada
+            // separadamente e sempre ficará visível; as demais abas são ocultadas.
             const allowedTabs = ['rotas', 'encomendas', 'inventarioFamilia'];
             // Seleciona todos os botões de navegação
             document.querySelectorAll('.nav-tabs .nav-tab').forEach(btn => {
@@ -4412,30 +4424,52 @@ let editingEncomendaId = null;
         document.getElementById('membroForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             
-            const nome = document.getElementById('membroNome').value;
-            const rg = document.getElementById('membroRG').value;
-            const telefone = document.getElementById('membroTelefone').value;
+            const nome = document.getElementById('membroNome').value.trim();
+            const rg = document.getElementById('membroRG').value.trim();
+            const telefone = document.getElementById('membroTelefone').value.trim();
             const cargo = document.getElementById('membroCargo').value;
+            const imagemInput = document.getElementById('membroImagem');
+            let imagemPath = null;
             
             try {
+                // Se o usuário selecionou uma imagem, faça upload antes de cadastrar o membro
+                if (imagemInput && imagemInput.files && imagemInput.files[0]) {
+                    const imgForm = new FormData();
+                    imgForm.append('imagem', imagemInput.files[0]);
+                    const imgResp = await fetch(`${API_BASE}/imagens/upload`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${localStorage.getItem('authToken') || ''}`
+                        },
+                        body: imgForm
+                    });
+                    const imgData = await imgResp.json();
+                    if (!imgResp.ok) {
+                        throw new Error(imgData.error || 'Erro ao enviar imagem');
+                    }
+                    // Armazena o caminho relativo retornado (caminho) para gravar no banco
+                    imagemPath = imgData.caminho;
+                }
+
+                // Agora envia os dados do membro com o campo imagem (pode ser null)
                 const response = await fetch(`${API_BASE}/membros`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ nome, rg, telefone, cargo })
+                    body: JSON.stringify({ nome, rg, telefone, cargo, imagem: imagemPath })
                 });
-                
                 const data = await response.json();
-                
                 if (response.ok) {
                     alert('Membro cadastrado com sucesso!');
                     closeModal('membroModal');
                     loadMembros();
                     this.reset();
+                    // Limpa o campo de upload de imagem manualmente (reset não limpa inputs file)
+                    if (imagemInput) imagemInput.value = '';
                 } else {
                     alert(data.error || 'Erro ao cadastrar membro');
                 }
             } catch (error) {
-                alert('Erro de conexão: ' + error.message);
+                alert('Erro: ' + error.message);
             }
         });
 
@@ -5398,13 +5432,32 @@ let editingEncomendaId = null;
                 return;
             }
             try {
+                let imagemPath = null;
+                const imgInput = document.getElementById('addItemImagem');
+                // Faz upload da imagem se um arquivo foi selecionado
+                if (imgInput && imgInput.files && imgInput.files[0]) {
+                    const imgForm = new FormData();
+                    imgForm.append('imagem', imgInput.files[0]);
+                    const imgResp = await fetch(`${API_BASE}/imagens/upload`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${localStorage.getItem('authToken') || ''}`
+                        },
+                        body: imgForm
+                    });
+                    const imgData = await imgResp.json();
+                    if (!imgResp.ok) {
+                        throw new Error(imgData.error || 'Erro ao enviar imagem do item');
+                    }
+                    imagemPath = imgData.caminho;
+                }
                 const response = await fetch(`${API_BASE}/inventario-familia`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${localStorage.getItem('authToken')}`
                     },
-                    body: JSON.stringify({ categoria, item: itemNome, quantidade, preco, motivo })
+                    body: JSON.stringify({ categoria, item: itemNome, quantidade, preco, imagem: imagemPath })
                 });
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.error || 'Erro ao salvar item');
@@ -5901,39 +5954,14 @@ let editingEncomendaId = null;
 
             // Função auxiliar para criar elemento de membro
             function createMembroElement(m) {
+                // Este elemento apenas exibe o nome do membro. A alteração de cargo
+                // deve ser feita em outras seções (como na tabela de membros) e não aqui.
                 const li = document.createElement('li');
                 li.style.marginBottom = '8px';
                 const nameSpan = document.createElement('span');
                 nameSpan.textContent = m.nome || m.username || 'Usuário';
                 nameSpan.style.marginRight = '8px';
                 li.appendChild(nameSpan);
-                // Exibe menu para trocar cargo se o usuário atual tiver permissão
-                if (currentUser && (currentUser.role === 'admin' || currentUser.role === 'grande-mestre' || currentUser.role === 'mestre-dos-ventos')) {
-                    const select = document.createElement('select');
-                // Define o valor padrão do select. Converte cargo 'membro' em 'acolito' para alinhar ao novo organograma.
-                let cargoVal = (m.cargo || 'membro').toLowerCase();
-                if (cargoVal === 'membro') cargoVal = 'acolito';
-                select.value = cargoVal;
-                    cargoOptions.forEach(opt => {
-                        const optionEl = document.createElement('option');
-                        optionEl.value = opt;
-                        optionEl.textContent = cargoDisplayMap[opt];
-                        if (opt === select.value) optionEl.selected = true;
-                        select.appendChild(optionEl);
-                    });
-                    select.onchange = async function() {
-                        const newCargo = this.value;
-                        try {
-                            await updateCargo(m.id, newCargo);
-                            // Atualiza localmente o cargo do membro e re-renderiza
-                            m.cargo = newCargo;
-                            renderOrganograma(membrosList);
-                        } catch (error) {
-                            console.error('Erro ao atualizar cargo:', error);
-                        }
-                    };
-                    li.appendChild(select);
-                }
                 return li;
             }
 
