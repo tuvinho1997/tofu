@@ -194,8 +194,25 @@ function initializeDatabase() {
         rg TEXT,
         telefone TEXT,
         cargo TEXT DEFAULT 'acolito',
+        imagem TEXT,
         data_cadastro DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
+
+    // Verificar se a tabela cadastro_pendentes possui a coluna 'imagem'
+    db.all('PRAGMA table_info(cadastro_pendentes)', (err, cols) => {
+        if (!err && cols) {
+            const hasImagem = cols.some(c => c.name === 'imagem');
+            if (!hasImagem) {
+                db.run('ALTER TABLE cadastro_pendentes ADD COLUMN imagem TEXT', (alterErr) => {
+                    if (alterErr) {
+                        console.warn('Não foi possível adicionar a coluna imagem em cadastro_pendentes:', alterErr.message);
+                    } else {
+                        console.log('Coluna imagem adicionada à tabela cadastro_pendentes');
+                    }
+                });
+            }
+        }
+    });
 
     // Criar tabela de inventário família. Por padrão usamos coluna
     // "nome" para identificar o item, mas se um banco antigo já
@@ -752,8 +769,58 @@ app.post('/api/auth/login', (req, res) => {
 // automaticamente o membro na tabela membros com o nome, RG e telefone
 // fornecidos. Por motivos de simplicidade e segurança básica, caso o
 // username já exista, retorna erro.
+// Função auxiliar para processar imagem base64 e salvar arquivo (similar ao comprovante)
+function processarImagemBase64Cadastro(imagemBase64, username) {
+    return new Promise((resolve, reject) => {
+        if (!imagemBase64) {
+            return resolve(null);
+        }
+
+        try {
+            // Extrair o tipo MIME e os dados base64
+            const matches = imagemBase64.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+            if (!matches || matches.length !== 3) {
+                return reject(new Error('Formato de imagem base64 inválido'));
+            }
+
+            const mimeType = matches[1];
+            const base64Data = matches[2];
+            
+            // Determinar extensão do arquivo
+            let ext = '.jpg';
+            if (mimeType.includes('png')) ext = '.png';
+            else if (mimeType.includes('jpeg') || mimeType.includes('jpg')) ext = '.jpg';
+            else if (mimeType.includes('gif')) ext = '.gif';
+            else if (mimeType.includes('webp')) ext = '.webp';
+
+            // Criar diretório se não existir
+            const imagensDir = 'static/images/items';
+            if (!fs.existsSync(imagensDir)) {
+                fs.mkdirSync(imagensDir, { recursive: true });
+            }
+
+            // Nome do arquivo: {username}_{timestamp}.{ext}
+            const timestamp = Date.now();
+            const filename = `${username}_${timestamp}${ext}`;
+            const filepath = path.join(imagensDir, filename);
+            const relativePath = `images/items/${filename}`;
+
+            // Converter base64 para buffer e salvar
+            const buffer = Buffer.from(base64Data, 'base64');
+            fs.writeFile(filepath, buffer, (err) => {
+                if (err) {
+                    return reject(err);
+                }
+                resolve(relativePath);
+            });
+        } catch (error) {
+            reject(error);
+        }
+    });
+}
+
 app.post('/api/auth/register', (req, res) => {
-    const { username, password, nome, rg, telefone } = req.body;
+    const { username, password, nome, rg, telefone, imagem } = req.body;
     if (!username || !password || !nome) {
         return res.status(400).json({ error: 'Dados incompletos para cadastro' });
     }
@@ -772,19 +839,41 @@ app.post('/api/auth/register', (req, res) => {
             if (pendingRow) {
                 return res.status(400).json({ error: 'Cadastro já está aguardando aprovação' });
             }
-            // Hash da senha
-            const hashed = bcrypt.hashSync(password, 10);
-            // Insere o cadastro como pendente para aprovação
-            db.run(
-                'INSERT INTO cadastro_pendentes (username, password, nome, rg, telefone, cargo) VALUES (?, ?, ?, ?, ?, ?)',
-                [username, hashed, nome, rg || null, telefone || null, 'acolito'],
-                function (insertErr) {
-                    if (insertErr) {
-                        return res.status(500).json({ error: insertErr.message });
+            
+            // Processar imagem se fornecida
+            const processarImagem = imagem ? 
+                processarImagemBase64Cadastro(imagem, username) : 
+                Promise.resolve(null);
+
+            processarImagem.then(imagemPath => {
+                // Hash da senha
+                const hashed = bcrypt.hashSync(password, 10);
+                // Insere o cadastro como pendente para aprovação
+                db.run(
+                    'INSERT INTO cadastro_pendentes (username, password, nome, rg, telefone, cargo, imagem) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    [username, hashed, nome, rg || null, telefone || null, 'acolito', imagemPath || null],
+                    function (insertErr) {
+                        if (insertErr) {
+                            return res.status(500).json({ error: insertErr.message });
+                        }
+                        return res.json({ message: 'Cadastro realizado. Aguarde aprovação de um administrador.' });
                     }
-                    return res.json({ message: 'Cadastro realizado. Aguarde aprovação de um administrador.' });
-                }
-            );
+                );
+            }).catch(imagemErr => {
+                console.error('Erro ao processar imagem:', imagemErr.message);
+                // Mesmo com erro na imagem, continuar com o cadastro
+                const hashed = bcrypt.hashSync(password, 10);
+                db.run(
+                    'INSERT INTO cadastro_pendentes (username, password, nome, rg, telefone, cargo, imagem) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    [username, hashed, nome, rg || null, telefone || null, 'acolito', null],
+                    function (insertErr) {
+                        if (insertErr) {
+                            return res.status(500).json({ error: insertErr.message });
+                        }
+                        return res.json({ message: 'Cadastro realizado. Aguarde aprovação de um administrador. Aviso: Erro ao processar imagem.' });
+                    }
+                );
+            });
         });
     });
 });
@@ -1806,10 +1895,15 @@ app.get('/api/membros', (req, res) => {
 });
 
 app.post('/api/membros', (req, res) => {
-    const { nome, rg, telefone, cargo, imagem } = req.body;
+    const { nome, rg, telefone, cargo, imagem, username, password } = req.body;
 
     // cargo default para membros sem definição explícita
     const cargoValor = cargo || 'membro';
+
+    // Validar se username e senha foram fornecidos juntos
+    if ((username && !password) || (!username && password)) {
+        return res.status(400).json({ error: 'Por favor, forneça tanto o usuário quanto a senha, ou deixe ambos em branco.' });
+    }
 
     // Realiza a inserção incluindo a coluna imagem. Caso a coluna não exista,
     // o SQLite irá ignorar a coluna extra e armazenar apenas as colunas
@@ -1821,10 +1915,60 @@ app.post('/api/membros', (req, res) => {
             }
             return res.status(500).json({ error: err.message });
         }
-        res.json({
-            message: 'Membro cadastrado com sucesso',
-            id: this.lastID
-        });
+
+        const membroId = this.lastID;
+
+        // Se username e senha foram fornecidos, criar usuário automaticamente
+        if (username && password) {
+            // Verificar se o username já existe
+            db.get('SELECT id FROM usuarios WHERE username = ?', [username], (errUser, existingUser) => {
+                if (errUser) {
+                    return res.status(500).json({ error: 'Erro ao verificar username: ' + errUser.message });
+                }
+                if (existingUser) {
+                    // Se o username já existe, remover o membro criado e retornar erro
+                    db.run('DELETE FROM membros WHERE id = ?', [membroId], () => {});
+                    return res.status(400).json({ error: 'Username já está em uso. Escolha outro.' });
+                }
+
+                // Criptografar a senha
+                const hashedPassword = bcrypt.hashSync(password, 10);
+                
+                // Determinar o role baseado no cargo do membro
+                let userRole = 'membro'; // padrão
+                if (cargoValor === 'grande-mestre' || cargoValor === 'mestre-dos-ventos') {
+                    userRole = cargoValor;
+                } else if (cargoValor === 'guardiao-do-dragao' || cargoValor === 'mestre-das-sombras') {
+                    userRole = 'membro'; // mantém como membro
+                }
+
+                // Criar o usuário
+                db.run('INSERT INTO usuarios (username, password, role) VALUES (?, ?, ?)', 
+                       [username, hashedPassword, userRole], function (errInsert) {
+                    if (errInsert) {
+                        // Se falhar ao criar usuário, remover o membro criado
+                        db.run('DELETE FROM membros WHERE id = ?', [membroId], () => {});
+                        if (errInsert.message.includes('UNIQUE constraint failed')) {
+                            return res.status(400).json({ error: 'Username já está em uso. Escolha outro.' });
+                        }
+                        return res.status(500).json({ error: 'Erro ao criar usuário: ' + errInsert.message });
+                    }
+                    
+                    res.json({
+                        message: 'Membro e usuário cadastrados com sucesso',
+                        id: membroId,
+                        userId: this.lastID,
+                        username: username
+                    });
+                });
+            });
+        } else {
+            // Se não forneceu username/senha, apenas retorna sucesso do membro
+            res.json({
+                message: 'Membro cadastrado com sucesso',
+                id: membroId
+            });
+        }
     });
 });
 
@@ -3139,6 +3283,52 @@ app.get('/api/usuarios', authenticateToken, (req, res) => {
     });
 });
 
+// Endpoint para excluir um usuário (permite reutilizar o username)
+app.delete('/api/usuarios/:id', authenticateToken, (req, res) => {
+    // Verificar se o usuário é administrador, grande-mestre ou mestre-dos-ventos
+    const allowedRoles = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas administradores e cargos mais altos podem excluir usuários.' });
+    }
+
+    const { id } = req.params;
+    const userId = parseInt(id);
+
+    // Não permitir que o usuário se exclua a si mesmo
+    if (req.user.id === userId) {
+        return res.status(400).json({ error: 'Você não pode excluir seu próprio usuário.' });
+    }
+
+    // Verificar se o usuário existe antes de excluir
+    db.get('SELECT id, username, role FROM usuarios WHERE id = ?', [userId], (err, user) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        if (!user) {
+            return res.status(404).json({ error: 'Usuário não encontrado' });
+        }
+
+        // Não permitir excluir o usuário admin padrão (proteção)
+        if (user.username === 'tofu' && user.role === 'admin') {
+            return res.status(400).json({ error: 'Não é permitido excluir o usuário administrador padrão.' });
+        }
+
+        // Excluir o usuário (isso libera o username para reutilização)
+        db.run('DELETE FROM usuarios WHERE id = ?', [userId], function(deleteErr) {
+            if (deleteErr) {
+                return res.status(500).json({ error: deleteErr.message });
+            }
+            if (this.changes === 0) {
+                return res.status(404).json({ error: 'Usuário não encontrado' });
+            }
+            res.json({ 
+                message: `Usuário ${user.username} excluído com sucesso. O username agora está disponível para reutilização.`,
+                deletedUser: { id: userId, username: user.username }
+            });
+        });
+    });
+});
+
 // Endpoint para alterar o cargo de um membro.
 // Apenas administradores e cargos mais altos (Grande Mestre e Mestre dos Ventos) podem alterar cargos.
 app.put('/api/membros/:id/cargo', authenticateToken, (req, res) => {
@@ -3218,8 +3408,9 @@ app.put('/api/usuarios/:id/ativar', authenticateToken, (req, res) => {
             // Cria usuário definitivo
             db.run('INSERT INTO usuarios (username, password, role) VALUES (?, ?, ?)', [pend.username, pend.password, newRole], function(err3) {
                 if (err3) return res.status(500).json({ error: err3.message });
-                // Cria membro correspondente
-                db.run('INSERT INTO membros (nome, rg, telefone, cargo) VALUES (?, ?, ?, ?)', [pend.nome, pend.rg || null, pend.telefone || null, newCargo], function(err4) {
+                // Cria membro correspondente incluindo a imagem se existir
+                db.run('INSERT INTO membros (nome, rg, telefone, cargo, imagem) VALUES (?, ?, ?, ?, ?)', 
+                       [pend.nome, pend.rg || null, pend.telefone || null, newCargo, pend.imagem || null], function(err4) {
                     if (err4) return res.status(500).json({ error: err4.message });
                     // Remove cadastro pendente
                     db.run('DELETE FROM cadastro_pendentes WHERE id = ?', [id], function(err5) {
