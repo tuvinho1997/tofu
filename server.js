@@ -1920,45 +1920,107 @@ app.post('/api/membros', (req, res) => {
 
         // Se username e senha foram fornecidos, criar usuário automaticamente
         if (username && password) {
-            // Verificar se o username já existe
-            db.get('SELECT id FROM usuarios WHERE username = ?', [username], (errUser, existingUser) => {
+            // Normalizar username (trim e lowercase para comparação)
+            const usernameNormalized = username.trim().toLowerCase();
+            
+            // Verificar se o username já existe em usuarios OU em cadastro_pendentes (case-insensitive)
+            db.get('SELECT id, username FROM usuarios WHERE LOWER(TRIM(username)) = ?', [usernameNormalized], (errUser, existingUser) => {
                 if (errUser) {
+                    console.error('Erro ao verificar username em usuarios:', errUser.message);
+                    db.run('DELETE FROM membros WHERE id = ?', [membroId], () => {});
                     return res.status(500).json({ error: 'Erro ao verificar username: ' + errUser.message });
                 }
                 if (existingUser) {
+                    console.log(`Username "${username}" já existe em usuarios (ID: ${existingUser.id}, username: ${existingUser.username})`);
                     // Se o username já existe, remover o membro criado e retornar erro
                     db.run('DELETE FROM membros WHERE id = ?', [membroId], () => {});
                     return res.status(400).json({ error: 'Username já está em uso. Escolha outro.' });
                 }
-
-                // Criptografar a senha
-                const hashedPassword = bcrypt.hashSync(password, 10);
                 
-                // Determinar o role baseado no cargo do membro
-                let userRole = 'membro'; // padrão
-                if (cargoValor === 'grande-mestre' || cargoValor === 'mestre-dos-ventos') {
-                    userRole = cargoValor;
-                } else if (cargoValor === 'guardiao-do-dragao' || cargoValor === 'mestre-das-sombras') {
-                    userRole = 'membro'; // mantém como membro
-                }
-
-                // Criar o usuário
-                db.run('INSERT INTO usuarios (username, password, role) VALUES (?, ?, ?)', 
-                       [username, hashedPassword, userRole], function (errInsert) {
-                    if (errInsert) {
-                        // Se falhar ao criar usuário, remover o membro criado
+                // Verificar também em cadastro_pendentes (case-insensitive)
+                db.get('SELECT id, username FROM cadastro_pendentes WHERE LOWER(TRIM(username)) = ?', [usernameNormalized], (errPending, pendingUser) => {
+                    if (errPending) {
+                        console.error('Erro ao verificar username em cadastro_pendentes:', errPending.message);
                         db.run('DELETE FROM membros WHERE id = ?', [membroId], () => {});
-                        if (errInsert.message.includes('UNIQUE constraint failed')) {
-                            return res.status(400).json({ error: 'Username já está em uso. Escolha outro.' });
-                        }
-                        return res.status(500).json({ error: 'Erro ao criar usuário: ' + errInsert.message });
+                        return res.status(500).json({ error: 'Erro ao verificar cadastros pendentes: ' + errPending.message });
+                    }
+                    if (pendingUser) {
+                        console.log(`Username "${username}" já existe em cadastro_pendentes (ID: ${pendingUser.id}, username: ${pendingUser.username})`);
+                        // Se o username está em cadastro pendente, remover o membro criado e retornar erro
+                        db.run('DELETE FROM membros WHERE id = ?', [membroId], () => {});
+                        return res.status(400).json({ error: 'Username já está em uso (cadastro pendente). Escolha outro.' });
                     }
                     
-                    res.json({
-                        message: 'Membro e usuário cadastrados com sucesso',
-                        id: membroId,
-                        userId: this.lastID,
-                        username: username
+                    console.log(`Username "${username}" disponível, criando usuário...`);
+
+                    // Criptografar a senha
+                    const hashedPassword = bcrypt.hashSync(password, 10);
+                    
+                    // Determinar o role baseado no cargo do membro
+                    let userRole = 'membro'; // padrão
+                    if (cargoValor === 'grande-mestre' || cargoValor === 'mestre-dos-ventos') {
+                        userRole = cargoValor;
+                    } else if (cargoValor === 'guardiao-do-dragao' || cargoValor === 'mestre-das-sombras') {
+                        userRole = 'membro'; // mantém como membro
+                    }
+
+                    // Criar o usuário (usando o username original, não o normalizado)
+                    db.run('INSERT INTO usuarios (username, password, role) VALUES (?, ?, ?)', 
+                           [username.trim(), hashedPassword, userRole], function (errInsert) {
+                        if (errInsert) {
+                            console.error('Erro ao inserir usuário:', errInsert.message);
+                            console.error('Username tentado:', username);
+                            
+                            // Se falhar ao criar usuário, remover o membro criado
+                            db.run('DELETE FROM membros WHERE id = ?', [membroId], () => {});
+                            
+                            if (errInsert.message.includes('UNIQUE constraint failed')) {
+                                // Se deu UNIQUE constraint, fazer verificações finais em ambas as tabelas
+                                // Verificar em usuarios (case-insensitive)
+                                db.get('SELECT id, username FROM usuarios WHERE username = ? COLLATE NOCASE', [username.trim()], (errFinal, finalCheck) => {
+                                    if (errFinal) {
+                                        console.error('Erro na verificação final usuarios:', errFinal.message);
+                                    }
+                                    
+                                    // Verificar também em cadastro_pendentes
+                                    db.get('SELECT id, username FROM cadastro_pendentes WHERE username = ? COLLATE NOCASE', [username.trim()], (errPendingFinal, pendingFinalCheck) => {
+                                        if (errPendingFinal) {
+                                            console.error('Erro na verificação final cadastro_pendentes:', errPendingFinal.message);
+                                        }
+                                        
+                                        if (finalCheck) {
+                                            return res.status(400).json({ 
+                                                error: `Username já está em uso na tabela usuarios (encontrado: "${finalCheck.username}"). Escolha outro.`
+                                            });
+                                        }
+                                        if (pendingFinalCheck) {
+                                            return res.status(400).json({ 
+                                                error: `Username já está em uso na tabela cadastro_pendentes (encontrado: "${pendingFinalCheck.username}"). Escolha outro.`
+                                            });
+                                        }
+                                        
+                                        // Se não encontrou em nenhuma tabela, pode ser problema de case sensitivity ou espaços
+                                        // Ou pode haver algum problema com o banco de dados
+                                        console.error(`UNIQUE constraint failed para "${username}" mas não encontrado em nenhuma tabela!`);
+                                        return res.status(400).json({ 
+                                            error: 'Username já está em uso (possível conflito de maiúsculas/minúsculas ou problema no banco). Escolha outro.',
+                                            debug: 'Tente usar um username diferente ou contate o administrador'
+                                        });
+                                    });
+                                });
+                                return;
+                            }
+                            return res.status(500).json({ error: 'Erro ao criar usuário: ' + errInsert.message });
+                        }
+                        
+                        console.log(`Usuário criado com sucesso: ${username} (ID: ${this.lastID})`);
+                        
+                        res.json({
+                            message: 'Membro e usuário cadastrados com sucesso',
+                            id: membroId,
+                            userId: this.lastID,
+                            username: username
+                        });
                     });
                 });
             });
@@ -3280,6 +3342,43 @@ app.get('/api/usuarios', authenticateToken, (req, res) => {
             return res.status(500).json({ error: err.message });
         }
         res.json(rows);
+    });
+});
+
+// Endpoint de debug para verificar usernames (apenas para administradores)
+app.get('/api/debug/username/:username', authenticateToken, (req, res) => {
+    const allowedRoles = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado.' });
+    }
+    
+    const { username } = req.params;
+    const usernameTrim = username.trim();
+    const usernameLower = usernameTrim.toLowerCase();
+    
+    // Verificar em usuarios (exato, case-insensitive, e com espaços)
+    db.all('SELECT id, username FROM usuarios WHERE username = ? OR LOWER(TRIM(username)) = ? OR username = ? COLLATE NOCASE', 
+           [usernameTrim, usernameLower, usernameTrim], (err1, usuarios) => {
+        if (err1) {
+            return res.status(500).json({ error: 'Erro ao verificar usuarios: ' + err1.message });
+        }
+        
+        // Verificar em cadastro_pendentes
+        db.all('SELECT id, username FROM cadastro_pendentes WHERE username = ? OR LOWER(TRIM(username)) = ? OR username = ? COLLATE NOCASE', 
+               [usernameTrim, usernameLower, usernameTrim], (err2, pendentes) => {
+            if (err2) {
+                return res.status(500).json({ error: 'Erro ao verificar cadastro_pendentes: ' + err2.message });
+            }
+            
+            res.json({
+                username_procurado: username,
+                username_trim: usernameTrim,
+                username_lower: usernameLower,
+                encontrado_em_usuarios: usuarios || [],
+                encontrado_em_cadastro_pendentes: pendentes || [],
+                total_encontrado: (usuarios?.length || 0) + (pendentes?.length || 0)
+            });
+        });
     });
 });
 
