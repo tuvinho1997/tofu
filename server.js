@@ -470,6 +470,26 @@ function initializeDatabase() {
     // Inserir taxa de comissão padrão (7%) se ainda não existir
     db.run('INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)', ['commission_rate', '0.07']);
 
+    // Criar tabela de configuração de materiais por rota
+    db.run(`CREATE TABLE IF NOT EXISTS config_materiais_rota (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        material TEXT UNIQUE NOT NULL,
+        quantidade INTEGER NOT NULL DEFAULT 0,
+        data_atualizacao DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+
+    // Inserir valores padrão de materiais por rota se não existirem
+    const materiaisPadrao = [
+        { material: 'Alumínio', quantidade: 160 },
+        { material: 'Emb Plástica', quantidade: 160 },
+        { material: 'Ferro', quantidade: 160 },
+        { material: 'Titânio', quantidade: 13 }
+    ];
+    materiaisPadrao.forEach(mat => {
+        db.run('INSERT OR IGNORE INTO config_materiais_rota (material, quantidade) VALUES (?, ?)', 
+               [mat.material, mat.quantidade]);
+    });
+
     // Criar usuário admin padrão
     const hashedPassword = bcrypt.hashSync('tofu$2025', 10);
     db.run(`INSERT OR IGNORE INTO usuarios (username, password, role) VALUES (?, ?, ?)`, 
@@ -1816,38 +1836,26 @@ app.post('/api/rotas', authenticateToken, (req, res) => {
             return res.status(404).json({ error: `Membro com ID ${membroId} não encontrado` });
         }
 
-        // Calcular materiais necessários: 160 de cada material + 13 titânios por rota
-        const materiaisNecessarios = [
-            { nome: 'Alumínio', quantidade: 160 * qtdRotas },
-            { nome: 'Emb Plástica', quantidade: 160 * qtdRotas },
-            { nome: 'Cobre', quantidade: 160 * qtdRotas },
-            { nome: 'Ferro', quantidade: 160 * qtdRotas },
-            { nome: 'Titânio', quantidade: 13 * qtdRotas }
-        ];
-
-        // Verificar se há material suficiente
-        db.all('SELECT nome, SUM(quantidade) as quantidade FROM estoque WHERE tipo = "material" GROUP BY nome', (errMat, rows) => {
-            if (errMat) {
-                return res.status(500).json({ error: errMat.message });
+        // Buscar configuração de materiais por rota
+        db.all('SELECT material, quantidade FROM config_materiais_rota', (errConfig, configRows) => {
+            if (errConfig) {
+                return res.status(500).json({ error: 'Erro ao buscar configuração de materiais: ' + errConfig.message });
             }
 
-            const estoqueAtual = {};
-            rows.forEach(row => {
-                estoqueAtual[row.nome] = row.quantidade;
+            // Se não houver configuração, usar valores padrão
+            const materiaisConfig = {};
+            configRows.forEach(row => {
+                materiaisConfig[row.material] = row.quantidade;
             });
 
-            // Verificar se há material suficiente
-            const faltaMaterial = materiaisNecessarios.find(mat => 
-                (estoqueAtual[mat.nome] || 0) < mat.quantidade
-            );
+            // Calcular materiais necessários usando valores configurados (ou padrão se não configurado)
+            const materiaisNecessarios = [
+                { nome: 'Alumínio', quantidade: (materiaisConfig['Alumínio'] || 160) * qtdRotas },
+                { nome: 'Emb Plástica', quantidade: (materiaisConfig['Emb Plástica'] || 160) * qtdRotas },
+                { nome: 'Ferro', quantidade: (materiaisConfig['Ferro'] || 160) * qtdRotas },
+                { nome: 'Titânio', quantidade: (materiaisConfig['Titânio'] || 13) * qtdRotas }
+            ];
 
-            if (faltaMaterial) {
-                return res.status(400).json({ 
-                    error: `Material insuficiente: ${faltaMaterial.nome}. Necessário: ${faltaMaterial.quantidade}, Disponível: ${estoqueAtual[faltaMaterial.nome] || 0}` 
-                });
-            }
-
-            // Criar a rota com status "entregue" e pagamento de R$ 16.000 por rota
             const pagamentoTotal = 16000 * qtdRotas;
             db.run('INSERT INTO rotas (membro_id, membro_nome, quantidade, data_entrega, status, pagamento) VALUES (?, ?, ?, ?, ?, ?)', 
                    [membroId, membro.nome, qtdRotas, data_entrega, 'entregue', pagamentoTotal], function (err) {
@@ -1977,100 +1985,199 @@ app.put('/api/rotas/:id', authenticateToken, (req, res) => {
 });
 
 /**
- * Remove materiais do estoque quando uma rota é cancelada ou excluída.
- * Para cada rota cancelada, remove 160 unidades de Alumínio, Cobre, Emb Plástica e Ferro,
- * e 13 unidades de Titânio. Retorna uma Promise para permitir encadeamento.
+ * Busca a configuração de materiais por rota do banco de dados.
+ * Retorna uma Promise com um objeto contendo as quantidades configuradas.
  */
-function removerMateriaisPorRota(qtd) {
+function getConfigMateriaisRota() {
     return new Promise((resolve, reject) => {
-        const quantidadeRota = parseFloat(qtd) || 1;
-        const updates = [
-            { nome: 'Alumínio', quantidade: 160 * quantidadeRota },
-            { nome: 'Cobre', quantidade: 160 * quantidadeRota },
-            { nome: 'Emb Plástica', quantidade: 160 * quantidadeRota },
-            { nome: 'Ferro', quantidade: 160 * quantidadeRota },
-            { nome: 'Titânio', quantidade: 13 * quantidadeRota }
-        ];
-        let pending = updates.length;
-        let hasError = false;
-        
-        updates.forEach(item => {
-            // Primeiro verificar o estoque atual, depois atualizar limitando a 0
-            db.get('SELECT quantidade FROM estoque WHERE tipo = "material" AND nome = ?', [item.nome], (errSelect, row) => {
-                if (errSelect) {
-                    console.error('Erro ao verificar estoque de', item.nome, ':', errSelect.message);
-                    hasError = true;
-                    pending--;
-                    if (pending === 0) {
-                        if (hasError) {
-                            reject(new Error('Erro ao remover alguns materiais'));
-                        } else {
-                            resolve();
-                        }
-                    }
-                    return;
-                }
-                
-                const estoqueAtual = row ? (row.quantidade || 0) : 0;
-                const novaQuantidade = Math.max(0, estoqueAtual - item.quantidade);
-                
-                db.run('UPDATE estoque SET quantidade = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE tipo = "material" AND nome = ?', 
-                       [novaQuantidade, item.nome], function(errUpdate) {
-                    if (errUpdate) {
-                        console.error('Erro ao remover material:', item.nome, errUpdate.message);
-                        hasError = true;
-                    }
-                    pending--;
-                    if (pending === 0) {
-                        if (hasError) {
-                            reject(new Error('Erro ao remover alguns materiais'));
-                        } else {
-                            resolve();
-                        }
-                    }
-                });
+        db.all('SELECT material, quantidade FROM config_materiais_rota', (err, rows) => {
+            if (err) {
+                return reject(err);
+            }
+            const config = {};
+            rows.forEach(row => {
+                config[row.material] = row.quantidade;
+            });
+            // Valores padrão se não configurado
+            resolve({
+                'Alumínio': config['Alumínio'] || 160,
+                'Emb Plástica': config['Emb Plástica'] || 160,
+                'Ferro': config['Ferro'] || 160,
+                'Titânio': config['Titânio'] || 13
             });
         });
     });
 }
 
 /**
+ * Remove materiais do estoque quando uma rota é cancelada ou excluída.
+ * Usa valores configurados da tabela config_materiais_rota.
+ * Retorna uma Promise para permitir encadeamento.
+ */
+function removerMateriaisPorRota(qtd) {
+    return new Promise((resolve, reject) => {
+        const quantidadeRota = parseFloat(qtd) || 1;
+        
+        getConfigMateriaisRota().then(config => {
+            const updates = [
+                { nome: 'Alumínio', quantidade: config['Alumínio'] * quantidadeRota },
+                { nome: 'Emb Plástica', quantidade: config['Emb Plástica'] * quantidadeRota },
+                { nome: 'Ferro', quantidade: config['Ferro'] * quantidadeRota },
+                { nome: 'Titânio', quantidade: config['Titânio'] * quantidadeRota }
+            ];
+            let pending = updates.length;
+            let hasError = false;
+            
+            updates.forEach(item => {
+                // Primeiro verificar o estoque atual, depois atualizar limitando a 0
+                db.get('SELECT quantidade FROM estoque WHERE tipo = "material" AND nome = ?', [item.nome], (errSelect, row) => {
+                    if (errSelect) {
+                        console.error('Erro ao verificar estoque de', item.nome, ':', errSelect.message);
+                        hasError = true;
+                        pending--;
+                        if (pending === 0) {
+                            if (hasError) {
+                                reject(new Error('Erro ao remover alguns materiais'));
+                            } else {
+                                resolve();
+                            }
+                        }
+                        return;
+                    }
+                    
+                    const estoqueAtual = row ? (row.quantidade || 0) : 0;
+                    const novaQuantidade = Math.max(0, estoqueAtual - item.quantidade);
+                    
+                    db.run('UPDATE estoque SET quantidade = ?, data_atualizacao = CURRENT_TIMESTAMP WHERE tipo = "material" AND nome = ?', 
+                           [novaQuantidade, item.nome], function(errUpdate) {
+                        if (errUpdate) {
+                            console.error('Erro ao remover material:', item.nome, errUpdate.message);
+                            hasError = true;
+                        }
+                        pending--;
+                        if (pending === 0) {
+                            if (hasError) {
+                                reject(new Error('Erro ao remover alguns materiais'));
+                            } else {
+                                resolve();
+                            }
+                        }
+                    });
+                });
+            });
+        }).catch(err => {
+            reject(err);
+        });
+    });
+}
+
+/**
  * Adiciona materiais ao estoque quando uma rota é criada (produção).
- * Para cada rota, adiciona 160 unidades de Alumínio, Cobre, Emb Plástica e Ferro,
- * e 13 unidades de Titânio. Retorna uma Promise para permitir encadeamento.
+ * Usa valores configurados da tabela config_materiais_rota.
+ * Retorna uma Promise para permitir encadeamento.
  */
 function adicionarMateriaisPorRota(qtd) {
     return new Promise((resolve, reject) => {
         const quantidadeRota = parseFloat(qtd) || 1;
-        const updates = [
-            { nome: 'Alumínio', quantidade: 160 * quantidadeRota },
-            { nome: 'Cobre', quantidade: 160 * quantidadeRota },
-            { nome: 'Emb Plástica', quantidade: 160 * quantidadeRota },
-            { nome: 'Ferro', quantidade: 160 * quantidadeRota },
-            { nome: 'Titânio', quantidade: 13 * quantidadeRota }
-        ];
-        let pending = updates.length;
-        let hasError = false;
         
-        updates.forEach(item => {
-            db.run('UPDATE estoque SET quantidade = quantidade + ?, data_atualizacao = CURRENT_TIMESTAMP WHERE tipo = "material" AND nome = ?', 
-                   [item.quantidade, item.nome], function(err) {
-                if (err) {
-                    console.error('Erro ao adicionar material:', item.nome, err.message);
-                    hasError = true;
-                }
-                pending--;
-                if (pending === 0) {
-                    if (hasError) {
-                        reject(new Error('Erro ao adicionar alguns materiais'));
-                    } else {
-                        resolve();
+        getConfigMateriaisRota().then(config => {
+            const updates = [
+                { nome: 'Alumínio', quantidade: config['Alumínio'] * quantidadeRota },
+                { nome: 'Emb Plástica', quantidade: config['Emb Plástica'] * quantidadeRota },
+                { nome: 'Ferro', quantidade: config['Ferro'] * quantidadeRota },
+                { nome: 'Titânio', quantidade: config['Titânio'] * quantidadeRota }
+            ];
+            let pending = updates.length;
+            let hasError = false;
+            
+            updates.forEach(item => {
+                db.run('UPDATE estoque SET quantidade = quantidade + ?, data_atualizacao = CURRENT_TIMESTAMP WHERE tipo = "material" AND nome = ?', 
+                       [item.quantidade, item.nome], function(err) {
+                    if (err) {
+                        console.error('Erro ao adicionar material:', item.nome, err.message);
+                        hasError = true;
                     }
-                }
+                    pending--;
+                    if (pending === 0) {
+                        if (hasError) {
+                            reject(new Error('Erro ao adicionar alguns materiais'));
+                        } else {
+                            resolve();
+                        }
+                    }
+                });
             });
+        }).catch(err => {
+            reject(err);
         });
     });
 }
+
+// APIs para configurar materiais por rota (apenas para Grande Mestre ou Mestre dos Ventos)
+app.get('/api/config/materiais-rota', authenticateToken, (req, res) => {
+    const role = req.user && req.user.role;
+    const allowedRoles = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    
+    if (!allowedRoles.includes(role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas administradores, Grande Mestres ou Mestres dos Ventos podem visualizar esta configuração.' });
+    }
+
+    db.all('SELECT material, quantidade FROM config_materiais_rota ORDER BY material', (err, rows) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json(rows);
+    });
+});
+
+app.put('/api/config/materiais-rota', authenticateToken, (req, res) => {
+    const role = req.user && req.user.role;
+    const allowedRoles = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    
+    if (!allowedRoles.includes(role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas administradores, Grande Mestres ou Mestres dos Ventos podem alterar esta configuração.' });
+    }
+
+    const { materiais } = req.body;
+    
+    if (!materiais || !Array.isArray(materiais)) {
+        return res.status(400).json({ error: 'É necessário enviar um array de materiais com material e quantidade' });
+    }
+
+    // Validar dados
+    for (const mat of materiais) {
+        if (!mat.material || typeof mat.quantidade !== 'number' || mat.quantidade < 0) {
+            return res.status(400).json({ error: 'Cada material deve ter um nome e uma quantidade válida (número >= 0)' });
+        }
+    }
+
+    // Atualizar ou inserir cada material
+    let processados = 0;
+    let erros = [];
+
+    materiais.forEach(mat => {
+        db.run('INSERT OR REPLACE INTO config_materiais_rota (material, quantidade, data_atualizacao) VALUES (?, ?, CURRENT_TIMESTAMP)', 
+               [mat.material, mat.quantidade], function(err) {
+            processados++;
+            if (err) {
+                erros.push({ material: mat.material, error: err.message });
+            }
+            
+            if (processados === materiais.length) {
+                if (erros.length > 0) {
+                    return res.status(500).json({ 
+                        error: 'Alguns materiais não puderam ser atualizados', 
+                        erros: erros 
+                    });
+                }
+                res.json({ 
+                    message: 'Configuração de materiais atualizada com sucesso',
+                    materiais: materiais
+                });
+            }
+        });
+    });
+});
 
 app.delete('/api/rotas/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
