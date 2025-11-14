@@ -2576,7 +2576,9 @@ let editingEncomendaId = null;
                 btnAprovar.className = 'btn-primary';
                 btnAprovar.style.marginRight = '5px';
                 btnAprovar.onclick = () => {
-                    aprovarUsuario(p.user_id, selectCargo.value);
+                    // Para compatibilidade com o novo endpoint, utiliza o campo 'id' se existir, senão 'user_id'
+                    const uid = p.id || p.user_id;
+                    aprovarUsuario(uid, selectCargo.value);
                 };
                 tdAcoes.appendChild(btnAprovar);
                 tr.appendChild(tdAcoes);
@@ -5604,8 +5606,10 @@ let editingEncomendaId = null;
                     spacer.style.cssText = 'flex: 1;';
                     itemCard.appendChild(spacer);
                     
-                    // Ações (apenas para administradores ou cargos de alto escalão)
-                    if (['admin','grande-mestre','mestre-dos-ventos'].includes(user.role)) {
+                    // Ações: permitem adicionar estoque, editar ou excluir itens conforme permissões.
+                    // O botão de edição agora fica disponível para todos os usuários que têm acesso ao inventário,
+                    // enquanto adicionar e excluir continuam restritos a cargos de maior hierarquia.
+                    {
                         const actionsDiv = document.createElement('div');
                         actionsDiv.style.cssText = 'display: flex; gap: 5px; flex-wrap: wrap; margin-top: auto;';
                         
