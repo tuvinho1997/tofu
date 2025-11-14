@@ -460,9 +460,65 @@ function initializeDatabase() {
         { tipo: 'municao', nome: '12cbc', quantidade: 0, preco: 200.00 }
     ];
 
-    estoqueInicial.forEach(item => {
-        db.run('INSERT OR IGNORE INTO estoque (tipo, nome, quantidade, preco) VALUES (?, ?, ?, ?)', 
-               [item.tipo, item.nome, item.quantidade, item.preco]);
+    // Inserir dados iniciais de estoque APENAS na primeira inicialização do sistema
+    // Verificamos se o sistema já foi usado antes (usuários, rotas, encomendas, etc.)
+    // Se já foi usado, NÃO insere valores padrão - preserva o estado atual (mesmo se zerado)
+    db.get(`SELECT 
+        (SELECT COUNT(*) FROM usuarios) as usuarios,
+        (SELECT COUNT(*) FROM rotas) as rotas,
+        (SELECT COUNT(*) FROM encomendas) as encomendas,
+        (SELECT COUNT(*) FROM estoque) as estoque`, (err, systemState) => {
+        if (err) {
+            console.error('Erro ao verificar estado do sistema:', err.message);
+            return;
+        }
+        
+        const sistemaJaFoiUsado = (systemState.usuarios > 1) || // Mais que 1 porque sempre tem o admin padrão
+                                  (systemState.rotas > 0) || 
+                                  (systemState.encomendas > 0);
+        
+        // Só insere valores iniciais se for realmente a primeira inicialização
+        // (sistema nunca foi usado E estoque está vazio)
+        if (!sistemaJaFoiUsado && systemState.estoque === 0) {
+            console.log('📦 Primeira inicialização: inserindo valores padrão de estoque...');
+            estoqueInicial.forEach(item => {
+                db.run('INSERT INTO estoque (tipo, nome, quantidade, preco) VALUES (?, ?, ?, ?)', 
+                       [item.tipo, item.nome, item.quantidade, item.preco], (insertErr) => {
+                    if (insertErr) {
+                        console.error(`Erro ao inserir estoque inicial para ${item.nome}:`, insertErr.message);
+                    } else {
+                        console.log(`✅ ${item.nome}: ${item.quantidade} unidades inseridas`);
+                    }
+                });
+            });
+        } else {
+            if (sistemaJaFoiUsado) {
+                console.log('📦 Sistema já foi usado anteriormente. Valores padrão NÃO serão inseridos (preservando estado atual, mesmo se zerado).');
+            } else {
+                console.log(`📦 Estoque já possui ${systemState.estoque} registros. Valores padrão NÃO serão inseridos.`);
+            }
+            // Verificar se faltam itens essenciais e inserir apenas os que não existem com quantidade 0
+            // Isso garante que a estrutura esteja completa, mas sem resetar valores existentes
+            estoqueInicial.forEach(item => {
+                db.get('SELECT id, quantidade FROM estoque WHERE tipo = ? AND nome = ?', [item.tipo, item.nome], (err, row) => {
+                    if (err) {
+                        console.error(`Erro ao verificar ${item.nome}:`, err.message);
+                        return;
+                    }
+                    // Só insere se realmente não existir (para casos onde o banco foi parcialmente limpo)
+                    // Se existir (mesmo zerado), não faz nada - preserva o estado atual
+                    if (!row) {
+                        console.log(`⚠️  ${item.nome} não encontrado, inserindo com quantidade 0...`);
+                        db.run('INSERT INTO estoque (tipo, nome, quantidade, preco) VALUES (?, ?, ?, ?)', 
+                               [item.tipo, item.nome, 0, item.preco], (insertErr) => {
+                            if (insertErr) {
+                                console.error(`Erro ao inserir ${item.nome}:`, insertErr.message);
+                            }
+                        });
+                    }
+                });
+            });
+        }
     });
 
     // Seeding de inventário família removido: agora é feito de forma dinâmica na
@@ -3067,11 +3123,12 @@ app.post('/api/historico-inventario-familia', authenticateToken, (req, res) => {
     });
 });
 
-// Endpoint para listar usuários (apenas para administradores)
+// Endpoint para listar usuários (apenas para administradores e cargos mais altos)
 app.get('/api/usuarios', authenticateToken, (req, res) => {
-    // Verificar se o usuário é administrador
-    if (req.user.role !== 'admin') {
-        return res.status(403).json({ error: 'Acesso negado. Apenas administradores podem listar usuários.' });
+    // Verificar se o usuário é administrador, grande-mestre ou mestre-dos-ventos
+    const allowedRoles = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas administradores e cargos mais altos podem listar usuários.' });
     }
 
     db.all('SELECT id, username, role FROM usuarios ORDER BY username', (err, rows) => {
@@ -3083,7 +3140,7 @@ app.get('/api/usuarios', authenticateToken, (req, res) => {
 });
 
 // Endpoint para alterar o cargo de um membro.
-// Apenas usuários com papel admin, líder ou vice-líder podem alterar cargos.
+// Apenas administradores e cargos mais altos (Grande Mestre e Mestre dos Ventos) podem alterar cargos.
 app.put('/api/membros/:id/cargo', authenticateToken, (req, res) => {
     const { id } = req.params;
     const { cargo } = req.body;
@@ -3092,7 +3149,7 @@ app.put('/api/membros/:id/cargo', authenticateToken, (req, res) => {
     // Permitem-se alterações apenas para administradores e os cargos mais altos (Grande Mestre e Mestre dos Ventos)
     const allowedRoles = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
     if (!req.user || !allowedRoles.includes(req.user.role)) {
-        return res.status(403).json({ error: 'Acesso negado. Apenas admin, líder e vice-líder podem alterar cargos.' });
+        return res.status(403).json({ error: 'Acesso negado. Apenas administradores e cargos mais altos podem alterar cargos.' });
     }
 
     // Validar cargo fornecido (lista de cargos válidos)
