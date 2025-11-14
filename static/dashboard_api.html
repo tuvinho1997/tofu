@@ -2988,7 +2988,6 @@ let editingEncomendaId = null;
         }
 
         // Visualizar comprovante associado a uma rota entregue.
-        // No momento a funcionalidade mostra apenas uma mensagem, pois o upload e armazenamento de imagens ainda não está implementado no backend.
         function verComprovante(id) {
             // Localiza a rota pelo id
             const rota = rotas.find(r => r.id === id);
@@ -3000,8 +2999,12 @@ let editingEncomendaId = null;
                 alert('Nenhum comprovante anexado para esta rota.');
                 return;
             }
-            // Caso exista um caminho, abre em nova aba
-            window.open(rota.comprovante_path, '_blank');
+            // Construir URL completa para acessar o arquivo estático
+            // O caminho salvo é relativo (ex: comprovantes/comprovante_rota_1_123456.jpg)
+            // Precisamos acessar via /static/
+            const imageUrl = `/static/${rota.comprovante_path}`;
+            // Abrir em nova aba
+            window.open(imageUrl, '_blank');
         }
 
         // Excluir rota (somente para administradores/gerentes/líderes)
