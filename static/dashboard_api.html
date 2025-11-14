@@ -662,6 +662,8 @@
         <button class="nav-tab" onclick="showTab('estoque')">Estoque</button>
         <button class="nav-tab" onclick="showTab('inventarioFamilia')">Inventário Família</button>
         <button class="nav-tab" onclick="showTab('relatorios')">Relatórios</button>
+        <!-- Organograma tab: visível apenas para admin, líder ou vice-líder -->
+        <button class="nav-tab" id="navOrganograma" onclick="showTab('organograma')" style="display: none;">Organograma</button>
     </div>
 
     <div class="main-content">
@@ -1325,9 +1327,12 @@
                 <div class="form-group">
                     <label>Cargo</label>
                     <select id="membroCargo">
-                        <option value="membro">Membro</option>
-                        <option value="gerente">Gerente</option>
-                        <option value="lider">Líder</option>
+                        <option value="acolito">Acólito</option>
+                        <option value="monge-guerreiro">Monge Guerreiro</option>
+                        <option value="mestre-das-sombras">Mestre das Sombras</option>
+                        <option value="guardiao-do-dragao">Guardião do Dragão</option>
+                        <option value="mestre-dos-ventos">Mestre dos Ventos</option>
+                        <option value="grande-mestre">Grande Mestre</option>
                     </select>
                 </div>
                 <button type="submit" class="btn-primary">Cadastrar Membro</button>
@@ -1739,9 +1744,12 @@
                 <div class="form-group">
                     <label>Cargo</label>
                     <select id="editMembroCargo">
-                        <option value="membro">Membro</option>
-                        <option value="gerente">Gerente</option>
-                        <option value="lider">Líder</option>
+                        <option value="acolito">Acólito</option>
+                        <option value="monge-guerreiro">Monge Guerreiro</option>
+                        <option value="mestre-das-sombras">Mestre das Sombras</option>
+                        <option value="guardiao-do-dragao">Guardião do Dragão</option>
+                        <option value="mestre-dos-ventos">Mestre dos Ventos</option>
+                        <option value="grande-mestre">Grande Mestre</option>
                     </select>
                 </div>
                 <button type="submit" class="btn-primary">Salvar Alterações</button>
@@ -1847,8 +1855,8 @@ let editingEncomendaId = null;
                 // Exibe ou oculta botões de administração conforme o papel do usuário.
                 const addFamiliaBtn = document.getElementById('btnAddFamilia');
                 if (addFamiliaBtn) {
-                    // Exibe o botão de cadastro de famílias apenas para administradores ou líderes
-                    if (user.role === 'admin' || user.role === 'lider') {
+                    // Exibe o botão de cadastro de famílias apenas para administradores ou cargos de alto escalão
+                    if (['admin','grande-mestre','mestre-dos-ventos'].includes(user.role)) {
                         addFamiliaBtn.style.display = 'inline-block';
                     } else {
                         addFamiliaBtn.style.display = 'none';
@@ -1858,7 +1866,7 @@ let editingEncomendaId = null;
                 // Exibe o botão de adicionar itens no estoque apenas para administradores ou líderes
                 const addEstoqueBtn = document.getElementById('btnAddEstoque');
                 if (addEstoqueBtn) {
-                    if (user.role === 'admin' || user.role === 'lider') {
+                    if (['admin','grande-mestre','mestre-dos-ventos'].includes(user.role)) {
                         addEstoqueBtn.style.display = 'inline-block';
                     } else {
                         addEstoqueBtn.style.display = 'none';
@@ -1868,7 +1876,7 @@ let editingEncomendaId = null;
                 // Exibe o botão de retirada de estoque apenas para administradores ou líderes
                 const retiradaBtn = document.getElementById('btnRetiradaEstoque');
                 if (retiradaBtn) {
-                    if (user.role === 'admin' || user.role === 'lider') {
+                    if (['admin','grande-mestre','mestre-dos-ventos'].includes(user.role)) {
                         retiradaBtn.style.display = 'inline-block';
                     } else {
                         retiradaBtn.style.display = 'none';
@@ -1877,20 +1885,20 @@ let editingEncomendaId = null;
 
                 // Carrega e exibe a configuração de taxa de comissão conforme o papel do usuário
                 loadCommissionRate();
-                // Exibe o botão de saída avulsa apenas para líderes
+                // Exibe o botão de saída avulsa apenas para cargos de alto escalão
                 const saidaBtn = document.getElementById('btnSaidaAvulsa');
                 if (saidaBtn) {
-                    if (user.role === 'lider') {
+                    if (['admin','grande-mestre','mestre-dos-ventos'].includes(user.role)) {
                         saidaBtn.style.display = 'inline-block';
                     } else {
                         saidaBtn.style.display = 'none';
                     }
                 }
 
-                // Exibe o botão de inventário para cargos de liderança (admin/gerente/lider)
+                // Exibe o botão de inventário para cargos de alto escalão
                 const inventarioBtn = document.getElementById('btnInventario');
                 if (inventarioBtn) {
-                    if (user.role === 'admin' || user.role === 'gerente' || user.role === 'lider') {
+                    if (['admin','grande-mestre','mestre-dos-ventos'].includes(user.role)) {
                         inventarioBtn.style.display = 'inline-block';
                     } else {
                         inventarioBtn.style.display = 'none';
@@ -1902,8 +1910,64 @@ let editingEncomendaId = null;
                 if (userBadge && user.role) {
                     userBadge.textContent = user.role.toUpperCase();
                 }
+                // Exibe a aba Organograma apenas para administradores, Grande Mestre ou Mestre dos Ventos
+                const navOrganograma = document.getElementById('navOrganograma');
+                if (navOrganograma) {
+                    if (['admin','grande-mestre','mestre-dos-ventos'].includes(user.role)) {
+                        navOrganograma.style.display = 'inline-block';
+                    } else {
+                        navOrganograma.style.display = 'none';
+                    }
+                }
+
+                // Ajusta abas visíveis conforme o papel do usuário
+                adjustTabsForRole(user.role);
             } catch (error) {
                 console.error('Erro ao carregar informações do usuário:', error);
+            }
+        }
+
+        /**
+         * Ajusta as abas de navegação visíveis de acordo com o cargo do usuário.
+         * Usuários de hierarquia inferior (Guardião do Dragão, Mestre das Sombras,
+         * Monge Guerreiro e Acólito) só podem acessar as abas de Rotas,
+         * Encomendas e Inventário da Família. As demais abas são ocultadas.
+         * Usuários de cargos mais altos ou administradores visualizam todas as abas
+         * (exceto aquelas explicitamente ocultadas por outras regras).
+         * @param {string} role Papel/cargo do usuário logado.
+         */
+        function adjustTabsForRole(role) {
+            const lowRoles = ['guardiao-do-dragao', 'mestre-das-sombras', 'monge-guerreiro', 'acolito'];
+            const allowedTabs = ['rotas', 'encomendas', 'inventarioFamilia'];
+            // Seleciona todos os botões de navegação
+            document.querySelectorAll('.nav-tabs .nav-tab').forEach(btn => {
+                const onclick = btn.getAttribute('onclick') || '';
+                const match = /showTab\('([^']+)'\)/.exec(onclick);
+                if (!match) return;
+                const tabName = match[1];
+                // Mantém a visibilidade do botão Organograma controlada separadamente
+                if (btn.id === 'navOrganograma') return;
+                if (lowRoles.includes(role)) {
+                    if (allowedTabs.includes(tabName)) {
+                        btn.style.display = 'inline-block';
+                    } else {
+                        btn.style.display = 'none';
+                    }
+                } else {
+                    // Para cargos mais altos, exibe todas as abas
+                    btn.style.display = 'inline-block';
+                }
+            });
+            // Para cargos inferiores, definir a aba inicial como Rotas se a atual não estiver disponível
+            if (lowRoles.includes(role)) {
+                const activeTab = document.querySelector('.nav-tab.active');
+                const activeOnclick = activeTab ? activeTab.getAttribute('onclick') || '' : '';
+                const activeMatch = /showTab\('([^']+)'\)/.exec(activeOnclick);
+                const activeTabName = activeMatch ? activeMatch[1] : '';
+                if (!allowedTabs.includes(activeTabName)) {
+                    // Ativa a aba Rotas como padrão
+                    showTab('rotas');
+                }
             }
         }
 
@@ -2170,6 +2234,11 @@ let editingEncomendaId = null;
                 case 'inventarioFamilia':
                     loadInventarioFamilia();
                     break;
+                case 'organograma':
+                    // Cria o contêiner do organograma se ainda não existir e carrega os dados
+                    ensureOrganogramaContainer();
+                    loadOrganograma();
+                    break;
             }
         }
 
@@ -2231,8 +2300,8 @@ let editingEncomendaId = null;
 
         // Carregar solicitações pendentes de cadastro (usuários inativos)
         async function loadPendentes() {
-            // Apenas mostrar para cargos de liderança
-            if (!currentUser || (currentUser.role !== 'admin' && currentUser.role !== 'gerente' && currentUser.role !== 'lider')) {
+            // Apenas mostrar para cargos de alto escalão (administrador, Grande Mestre ou Mestre dos Ventos)
+            if (!currentUser || !['admin','grande-mestre','mestre-dos-ventos'].includes(currentUser.role)) {
                 document.getElementById('pendentesCard').style.display = 'none';
                 return;
             }
@@ -2296,10 +2365,13 @@ let editingEncomendaId = null;
                 const tdCargo = document.createElement('td');
                 const selectCargo = document.createElement('select');
                 selectCargo.style.padding = '4px';
-                ['membro','gerente','lider'].forEach(c => {
+                // Lista de cargos para pendentes - usa novos cargos
+                ['acolito','monge-guerreiro','mestre-das-sombras','guardiao-do-dragao','mestre-dos-ventos','grande-mestre'].forEach(c => {
                     const opt = document.createElement('option');
                     opt.value = c;
-                    opt.textContent = c.charAt(0).toUpperCase() + c.slice(1);
+                    // Formata o nome do cargo com letras e hífens apropriados
+                    const displayName = c.replace(/-/g, ' ');
+                    opt.textContent = displayName.charAt(0).toUpperCase() + displayName.slice(1);
                     if (p.cargo === c) opt.selected = true;
                     selectCargo.appendChild(opt);
                 });
@@ -2403,8 +2475,8 @@ let editingEncomendaId = null;
                 const row = document.createElement('tr');
                 // Constrói as ações: sempre incluir botão Excluir; se usuário atual tiver permissões de admin/gerente/lider, incluir botão Editar
                 let acoes = '';
-                // Editar (permite alterar nome, RG e cargo) - apenas admin e lider
-                if (currentUser && (currentUser.role === 'admin' || currentUser.role === 'lider')) {
+                // Editar (permite alterar nome, RG e cargo) - apenas administradores ou cargos de alto escalão
+                if (currentUser && ['admin','grande-mestre','mestre-dos-ventos'].includes(currentUser.role)) {
                     acoes += `<button class="btn-secondary" style="background: #3498db; padding: 6px 12px; font-size: 12px; margin-right: 5px;" onclick="openEditMembroModal(${membro.id})">Editar</button>`;
                 }
                 // Excluir
@@ -2441,7 +2513,8 @@ let editingEncomendaId = null;
             if (telInput) {
                 telInput.value = membro.telefone || '';
             }
-            document.getElementById('editMembroCargo').value = membro.cargo || 'membro';
+            // Se o cargo não estiver definido, define para Acólito por padrão
+            document.getElementById('editMembroCargo').value = membro.cargo || 'acolito';
             document.getElementById('editMembroModal').style.display = 'block';
         }
 
@@ -2561,8 +2634,8 @@ let editingEncomendaId = null;
                 // Construir ações dinamicamente com base no status e no papel do usuário
                 let acoesHTML = '';
                 if (rota.status === 'pendente') {
-                    // Somente administradores ou líderes podem lançar rotas pendentes
-                    if (currentUser && (currentUser.role === 'admin' || currentUser.role === 'lider')) {
+                    // Somente administradores ou cargos de alto escalão podem lançar rotas pendentes
+                    if (currentUser && ['admin','grande-mestre','mestre-dos-ventos'].includes(currentUser.role)) {
                         acoesHTML += `<button class="btn-primary" style="background: #3498db; padding: 6px 12px; font-size: 12px; margin-right: 5px;" onclick="lancarRota(${rota.id})">Lançar</button>`;
                     }
                 }
@@ -2571,9 +2644,8 @@ let editingEncomendaId = null;
                     console.log('Rota entregue:', rota.id, 'Pagamento:', rota.pagamento, 'Pagante:', rota.pagante_username);
                     console.log('Usuário atual role:', currentUser ? currentUser.role : 'N/A');
                     
-                    // Se o pagamento ainda não foi efetuado, exibe botão para lançar pagamento
-                    // Simplificando a condição para debug
-                    if (currentUser && (currentUser.role === 'admin' || currentUser.role === 'lider')) {
+                    // Se o pagamento ainda não foi efetuado, exibe botão para lançar pagamento (somente cargos de alto escalão)
+                    if (currentUser && ['admin','grande-mestre','mestre-dos-ventos'].includes(currentUser.role)) {
                         acoesHTML += `<button class="btn-primary" style="background: #27ae60; padding: 6px 12px; font-size: 12px; margin-right: 5px;" onclick="openPagamentoModal(${rota.id})">Pagar</button>`;
                     }
                     
@@ -2582,8 +2654,8 @@ let editingEncomendaId = null;
                         acoesHTML += `<button class="btn-secondary" style="background: #8e44ad; padding: 6px 12px; font-size: 12px; margin-right: 5px;" onclick="verComprovante(${rota.id})">Ver Comprovante</button>`;
                     }
                 }
-                // Botão de excluir apenas para administradores ou líderes
-                if (currentUser && (currentUser.role === 'admin' || currentUser.role === 'lider')) {
+                // Botão de excluir apenas para administradores ou cargos de alto escalão
+                if (currentUser && ['admin','grande-mestre','mestre-dos-ventos'].includes(currentUser.role)) {
                     acoesHTML += `<button class="btn-primary" style="background: #e74c3c; padding: 6px 12px; font-size: 12px;" onclick="deleteRota(${rota.id})">Excluir</button>`;
                 }
                 row.innerHTML = `
@@ -2815,8 +2887,8 @@ let editingEncomendaId = null;
             const container = document.getElementById('commissionRateContainer');
             const input = document.getElementById('commissionRateInput');
             if (!container || !input) return;
-            // Exibir apenas para líderes ou administradores
-            if (currentUser && (currentUser.role === 'admin' || currentUser.role === 'lider')) {
+            // Exibir apenas para administradores ou cargos de alto escalão
+            if (currentUser && ['admin','grande-mestre','mestre-dos-ventos'].includes(currentUser.role)) {
                 container.style.display = 'flex';
             } else {
                 container.style.display = 'none';
@@ -3055,8 +3127,8 @@ let editingEncomendaId = null;
                         <td data-label="Status"><span class="${statusClass}">${statusIcon} ${encomenda.status}</span></td>
                         <td data-label="Data/Hora">${new Date(encomenda.data_criacao).toLocaleString('pt-BR')}</td>
                         <td data-label="Ações">
-                            <!-- Botões de ação são exibidos somente para administradores ou líderes -->
-                            ${ (currentUser && (currentUser.role === 'admin' || currentUser.role === 'lider')) ? `
+                            <!-- Botões de ação são exibidos somente para administradores ou cargos de alto escalão -->
+                            ${ (currentUser && ['admin','grande-mestre','mestre-dos-ventos'].includes(currentUser.role)) ? `
                                 <button class="btn-secondary btn-sm" onclick="editarEncomenda(${encomenda.id})" title="Editar">✏️</button>
                                 <button class="btn-danger btn-sm" onclick="deleteEncomenda(${encomenda.id})" title="Excluir">🗑️</button>
                                 <button class="btn-warning btn-sm" onclick="cancelarEncomenda(${encomenda.id})" title="Cancelar">❌</button>
@@ -4022,7 +4094,7 @@ let editingEncomendaId = null;
                 // Verificar se o usuário pode editar
                 let editable = false;
                 try {
-                    if (currentUser && ['admin','lider'].includes(currentUser.role)) {
+                    if (currentUser && ['admin','grande-mestre','mestre-dos-ventos'].includes(currentUser.role)) {
                         editable = true;
                     }
                 } catch (e) {}
@@ -4715,9 +4787,9 @@ let editingEncomendaId = null;
                     const membros = await membrosRes.json();
                     console.log('Membros retornados:', membros);
                     
-                    // Filtra apenas membros com cargo de líder
+                    // Filtra apenas membros com cargos de alto escalão (Grande Mestre ou Mestre dos Ventos)
                     const lideres = Array.isArray(membros) ? membros.filter(m => 
-                        m.cargo === 'lider'
+                        ['grande-mestre','mestre-dos-ventos'].includes(m.cargo)
                     ) : [];
                     
                     console.log('Líderes filtrados por cargo:', lideres);
@@ -4748,8 +4820,8 @@ let editingEncomendaId = null;
                 
             } catch (err) {
                 console.error('Erro ao carregar líderes:', err);
-                // Fallback: mostra apenas o usuário atual se for líder
-                if (currentUser && currentUser.role === 'lider') {
+                // Fallback: mostra apenas o usuário atual se for cargo de alto escalão
+                if (currentUser && ['grande-mestre','mestre-dos-ventos','admin'].includes(currentUser.role)) {
                     const opt = document.createElement('option');
                     opt.value = currentUser.id;
                     opt.textContent = `${currentUser.username} (${currentUser.role})`;
@@ -4885,9 +4957,11 @@ let editingEncomendaId = null;
             const actionsDiv = document.getElementById('inventarioFamiliaActions');
             if (!actionsDiv) return;
             actionsDiv.innerHTML = '';
-            
-            // Ação para adicionar item (somente líderes/administradores)
-            if (user.role === 'admin' || user.role === 'lider') {
+
+            // Define visibilidade do contêiner de ações
+            if (['admin','grande-mestre','mestre-dos-ventos'].includes(user.role)) {
+                actionsDiv.style.display = 'flex';
+                // Ação para adicionar item (somente administradores ou cargos de alto escalão)
                 const addBtn = document.createElement('button');
                 addBtn.className = 'btn-primary';
                 addBtn.textContent = 'Adicionar Item';
@@ -4895,8 +4969,8 @@ let editingEncomendaId = null;
                     openAddItemFamilia();
                 };
                 actionsDiv.appendChild(addBtn);
-
-
+            } else {
+                actionsDiv.style.display = 'none';
             }
         }
 
@@ -4988,6 +5062,16 @@ let editingEncomendaId = null;
             if (!grid) return;
             grid.innerHTML = '';
             const user = currentUser || JSON.parse(localStorage.getItem('user') || '{}');
+
+            // Usuários de cargos mais baixos não devem visualizar o inventário; exibe apenas mensagem
+            const lowRolesInv = ['guardiao-do-dragao','mestre-das-sombras','monge-guerreiro','acolito'];
+            if (lowRolesInv.includes(user.role)) {
+                const msg = document.createElement('div');
+                msg.style.cssText = 'color: #bdc3c7; padding: 20px; text-align: center; background: rgba(44, 62, 80, 0.6); border-radius: 8px;';
+                msg.textContent = 'Você não tem acesso ao inventário da família. Utilize o botão "Nova Requisição" para solicitar materiais.';
+                grid.appendChild(msg);
+                return;
+            }
             
             // Agrupar por categoria
             const grouped = {};
@@ -5062,8 +5146,8 @@ let editingEncomendaId = null;
                     spacer.style.cssText = 'flex: 1;';
                     itemCard.appendChild(spacer);
                     
-                    // Ações (apenas para admin e líder)
-                    if (user.role === 'admin' || user.role === 'lider') {
+                    // Ações (apenas para administradores ou cargos de alto escalão)
+                    if (['admin','grande-mestre','mestre-dos-ventos'].includes(user.role)) {
                         const actionsDiv = document.createElement('div');
                         actionsDiv.style.cssText = 'display: flex; gap: 5px; flex-wrap: wrap; margin-top: auto;';
                         
@@ -5150,7 +5234,7 @@ let editingEncomendaId = null;
                 
                 // Monta coluna de ações
                 let actionsHTML = '';
-                if (user.role === 'admin' || user.role === 'lider') {
+                if (['admin','grande-mestre','mestre-dos-ventos'].includes(user.role)) {
                     if (req.status === 'pendente') {
                         actionsHTML += `<button class="btn-primary" onclick="aprovarRequisicao(${req.id})" style="margin: 2px; padding: 6px 12px; font-size: 0.85em;">✅ Aprovar</button>`;
                         actionsHTML += `<button class="btn-secondary" onclick="rejeitarRequisicao(${req.id})" style="margin: 2px; padding: 6px 12px; font-size: 0.85em;">❌ Rejeitar</button>`;
@@ -5408,10 +5492,18 @@ let editingEncomendaId = null;
             selects.forEach(select => {
                 select.innerHTML = '<option value="">Selecione um item...</option>';
                 if (inventarioFamilia && inventarioFamilia.length > 0) {
+                    // Verifica cargo do usuário para decidir se mostra quantidades
+                    const user = currentUser || JSON.parse(localStorage.getItem('user') || '{}');
+                    const lowRoles = ['guardiao-do-dragao','mestre-das-sombras','monge-guerreiro','acolito'];
                     inventarioFamilia.forEach(it => {
                         const opt = document.createElement('option');
                         opt.value = it.id;
-                        opt.textContent = `${it.categoria} - ${it.item} (Qtd: ${it.quantidade})`;
+                        // Usuários de cargos mais baixos não podem ver a quantidade em estoque
+                        if (lowRoles.includes(user.role)) {
+                            opt.textContent = `${it.categoria} - ${it.item}`;
+                        } else {
+                            opt.textContent = `${it.categoria} - ${it.item} (Qtd: ${it.quantidade})`;
+                        }
                         select.appendChild(opt);
                     });
                 }
@@ -5726,6 +5818,165 @@ let editingEncomendaId = null;
             } catch (error) {
                 alert(`❌ Erro de conexão: ${error.message}`);
             }
+        }
+
+        // ===== Organograma da Facção =====
+        // Garante que o contêiner do organograma exista. Se não existir, cria dinamicamente.
+        function ensureOrganogramaContainer() {
+            let orgEl = document.getElementById('organograma');
+            if (!orgEl) {
+                const mainContent = document.querySelector('.main-content');
+                const div = document.createElement('div');
+                div.id = 'organograma';
+                div.className = 'tab-content';
+                div.style.display = 'none';
+                div.innerHTML = `
+                    <div class="content-card">
+                        <div class="card-header">
+                            <h3 class="card-title">Organograma da Facção</h3>
+                        </div>
+                        <div id="organogramaContent" style="margin-top: 15px;"></div>
+                    </div>
+                `;
+                mainContent.appendChild(div);
+            }
+        }
+
+        // Carrega os membros e exibe a árvore do organograma.
+        async function loadOrganograma() {
+            try {
+                const token = localStorage.getItem('authToken');
+                if (!token) return;
+                const headers = { 'Authorization': 'Bearer ' + token };
+                const resp = await fetch(API_BASE + '/membros', { headers });
+                const data = await resp.json();
+                renderOrganograma(data || []);
+            } catch (err) {
+                console.error('Erro ao carregar organograma:', err);
+            }
+        }
+
+        // Mapeamento de cargos para exibição legível
+        const cargoDisplayMap = {
+            'grande-mestre': 'Grande Mestre (Shifu Supremo)',
+            'mestre-dos-ventos': 'Mestre dos Ventos (Conselheiro-Chefe)',
+            'guardiao-do-dragao': 'Guardião do Dragão (Chefe de Combate)',
+            'mestre-das-sombras': 'Mestre das Sombras (Chefe de Operações Secretas)',
+            'monge-guerreiro': 'Monges Guerreiros (Guerreiros Oficiais)',
+    'acolito': 'Acólitos (Novatos)',
+    // Alias para compatibilidade com bancos antigos que ainda utilizam "membro" como cargo.
+    'membro': 'Acólitos (Novatos)'
+        };
+
+        // Lista de cargos válidos (usada para dropdown)
+        const cargoOptions = Object.keys(cargoDisplayMap);
+
+        // Renderiza a árvore do organograma
+        function renderOrganograma(membrosList) {
+            ensureOrganogramaContainer();
+            const container = document.getElementById('organogramaContent');
+            if (!container) return;
+            container.innerHTML = '';
+
+            // Agrupa membros por cargo
+            const grupos = {};
+            membrosList.forEach(m => {
+                // Normaliza o cargo: converte valores nulos/indefinidos em 'membro' e
+                // trata o cargo 'membro' como 'acolito' para compatibilidade com o novo organograma.
+                let cargoKey = (m.cargo || 'membro').toLowerCase();
+                if (cargoKey === 'membro') cargoKey = 'acolito';
+                if (!grupos[cargoKey]) grupos[cargoKey] = [];
+                grupos[cargoKey].push(m);
+            });
+
+            // Define a ordem em que os cargos devem ser exibidos
+            const ordem = [
+                'grande-mestre',
+                'mestre-dos-ventos',
+                'guardiao-do-dragao',
+                'mestre-das-sombras',
+                'monge-guerreiro',
+                'acolito'
+            ];
+
+            // Função auxiliar para criar elemento de membro
+            function createMembroElement(m) {
+                const li = document.createElement('li');
+                li.style.marginBottom = '8px';
+                const nameSpan = document.createElement('span');
+                nameSpan.textContent = m.nome || m.username || 'Usuário';
+                nameSpan.style.marginRight = '8px';
+                li.appendChild(nameSpan);
+                // Exibe menu para trocar cargo se o usuário atual tiver permissão
+                if (currentUser && (currentUser.role === 'admin' || currentUser.role === 'grande-mestre' || currentUser.role === 'mestre-dos-ventos')) {
+                    const select = document.createElement('select');
+                // Define o valor padrão do select. Converte cargo 'membro' em 'acolito' para alinhar ao novo organograma.
+                let cargoVal = (m.cargo || 'membro').toLowerCase();
+                if (cargoVal === 'membro') cargoVal = 'acolito';
+                select.value = cargoVal;
+                    cargoOptions.forEach(opt => {
+                        const optionEl = document.createElement('option');
+                        optionEl.value = opt;
+                        optionEl.textContent = cargoDisplayMap[opt];
+                        if (opt === select.value) optionEl.selected = true;
+                        select.appendChild(optionEl);
+                    });
+                    select.onchange = async function() {
+                        const newCargo = this.value;
+                        try {
+                            await updateCargo(m.id, newCargo);
+                            // Atualiza localmente o cargo do membro e re-renderiza
+                            m.cargo = newCargo;
+                            renderOrganograma(membrosList);
+                        } catch (error) {
+                            console.error('Erro ao atualizar cargo:', error);
+                        }
+                    };
+                    li.appendChild(select);
+                }
+                return li;
+            }
+
+            // Cria uma lista para cada grupo de cargo
+            ordem.forEach(cargo => {
+                const members = grupos[cargo];
+                if (members && members.length > 0) {
+                    const section = document.createElement('div');
+                    section.style.marginBottom = '15px';
+                    const header = document.createElement('h4');
+                    header.textContent = cargoDisplayMap[cargo] || cargo;
+                    header.style.color = '#ecf0f1';
+                    header.style.marginBottom = '8px';
+                    section.appendChild(header);
+                    const ul = document.createElement('ul');
+                    ul.style.listStyle = 'none';
+                    ul.style.paddingLeft = '15px';
+                    members.forEach(member => {
+                        ul.appendChild(createMembroElement(member));
+                    });
+                    section.appendChild(ul);
+                    container.appendChild(section);
+                }
+            });
+        }
+
+        // Chama o endpoint para atualizar o cargo do membro no backend
+        async function updateCargo(membroId, newCargo) {
+            const token = localStorage.getItem('authToken');
+            const headers = {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + token
+            };
+            const resp = await fetch(`${API_BASE}/membros/${membroId}/cargo`, {
+                method: 'PUT',
+                headers,
+                body: JSON.stringify({ cargo: newCargo })
+            });
+            if (!resp.ok) {
+                const errData = await resp.json().catch(() => ({}));
+                throw new Error(errData.error || 'Erro ao atualizar cargo');
+            }
+            return resp.json();
         }
 
     </script>
