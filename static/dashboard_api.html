@@ -1128,7 +1128,10 @@
             <div class="content-card">
                 <div class="card-header">
                     <h3 class="card-title">Sistema de Rotas</h3>
-                    <button class="btn-primary" onclick="openModal('rotaModal')">Nova Rota</button>
+                    <div style="display: flex; gap: 10px;">
+                        <button class="btn-primary" onclick="openModal('rotaModal')">Nova Rota</button>
+                        <button id="btnConfigMateriaisRota" class="btn-secondary" onclick="openModal('configMateriaisRotaModal')" style="display: none; background: #8e44ad;">Configurar Materiais</button>
+                    </div>
                 </div>
                 <div id="rotasLoading" class="loading">Carregando rotas...</div>
                 <div id="rotasTable" style="display: none;">
@@ -1514,6 +1517,35 @@
                     <input type="file" id="rotaComprovante" accept="image/*">
                 </div>
                 <button type="submit" class="btn-primary">Cadastrar Rota</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal Configurar Materiais por Rota -->
+    <div id="configMateriaisRotaModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Configurar Materiais por Rota</h3>
+                <button class="close-btn" onclick="closeModal('configMateriaisRotaModal')">&times;</button>
+            </div>
+            <form id="configMateriaisRotaForm">
+                <div class="form-group">
+                    <label>Alumínio (quantidade por rota)</label>
+                    <input type="number" id="configAluminio" min="0" required>
+                </div>
+                <div class="form-group">
+                    <label>Emb Plástica (quantidade por rota)</label>
+                    <input type="number" id="configEmbPlastica" min="0" required>
+                </div>
+                <div class="form-group">
+                    <label>Ferro (quantidade por rota)</label>
+                    <input type="number" id="configFerro" min="0" required>
+                </div>
+                <div class="form-group">
+                    <label>Titânio (quantidade por rota)</label>
+                    <input type="number" id="configTitanio" min="0" required>
+                </div>
+                <button type="submit" class="btn-primary">Salvar Configuração</button>
             </form>
         </div>
     </div>
@@ -2094,6 +2126,16 @@ let editingEncomendaId = null;
                     }
                 }
 
+                // Exibe o botão de configurar materiais por rota apenas para Grande Mestre ou Mestre dos Ventos
+                const btnConfigMateriaisRota = document.getElementById('btnConfigMateriaisRota');
+                if (btnConfigMateriaisRota) {
+                    if (['admin','grande-mestre','mestre-dos-ventos'].includes(user.role)) {
+                        btnConfigMateriaisRota.style.display = 'inline-block';
+                    } else {
+                        btnConfigMateriaisRota.style.display = 'none';
+                    }
+                }
+
                 // Atualiza o selo de papel do usuário (badge) na interface
                 const userBadge = document.getElementById('userBadge');
                 if (userBadge && user.role) {
@@ -2440,6 +2482,8 @@ let editingEncomendaId = null;
             
             if (modalId === 'rotaModal') {
                 loadMembrosSelect();
+            } else if (modalId === 'configMateriaisRotaModal') {
+                loadConfigMateriaisRota();
             } else if (modalId === 'encomendaModal') {
                 // Carrega famílias cadastradas e membros responsáveis pela venda e calcula o valor total.
                 loadFamilias();
@@ -4954,6 +4998,71 @@ let editingEncomendaId = null;
                 reader.readAsDataURL(file);
             } else {
                 sendRequest(null);
+            }
+        });
+
+        // Função para carregar configuração de materiais por rota
+        async function loadConfigMateriaisRota() {
+            try {
+                const token = localStorage.getItem('authToken');
+                const response = await fetch(`${API_BASE}/config/materiais-rota`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    // Preencher os campos com os valores atuais
+                    data.forEach(mat => {
+                        if (mat.material === 'Alumínio') {
+                            document.getElementById('configAluminio').value = mat.quantidade;
+                        } else if (mat.material === 'Emb Plástica') {
+                            document.getElementById('configEmbPlastica').value = mat.quantidade;
+                        } else if (mat.material === 'Ferro') {
+                            document.getElementById('configFerro').value = mat.quantidade;
+                        } else if (mat.material === 'Titânio') {
+                            document.getElementById('configTitanio').value = mat.quantidade;
+                        }
+                    });
+                } else {
+                    alert('Erro ao carregar configuração: ' + (data.error || 'Erro desconhecido'));
+                }
+            } catch (error) {
+                console.error('Erro ao carregar configuração de materiais:', error);
+                alert('Erro ao carregar configuração: ' + error.message);
+            }
+        }
+
+        // Handler do formulário de configuração de materiais por rota
+        document.getElementById('configMateriaisRotaForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            try {
+                const materiais = [
+                    { material: 'Alumínio', quantidade: parseInt(document.getElementById('configAluminio').value) },
+                    { material: 'Emb Plástica', quantidade: parseInt(document.getElementById('configEmbPlastica').value) },
+                    { material: 'Ferro', quantidade: parseInt(document.getElementById('configFerro').value) },
+                    { material: 'Titânio', quantidade: parseInt(document.getElementById('configTitanio').value) }
+                ];
+
+                const token = localStorage.getItem('authToken');
+                const response = await fetch(`${API_BASE}/config/materiais-rota`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ materiais })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    alert('Configuração de materiais salva com sucesso!');
+                    closeModal('configMateriaisRotaModal');
+                } else {
+                    alert('Erro ao salvar configuração: ' + (data.error || 'Erro desconhecido'));
+                }
+            } catch (error) {
+                console.error('Erro ao salvar configuração:', error);
+                alert('Erro ao salvar configuração: ' + error.message);
             }
         });
 
