@@ -1966,6 +1966,18 @@
         </div>
     </div>
     <script>
+        // --- Armazenamento de imagens personalizadas de estoque ---
+        // Objeto que armazena caminhos de imagem personalizados para itens do estoque.
+        // Ele é carregado do localStorage quando a página é carregada para persistir
+        // as escolhas do usuário entre sessões. As chaves são os nomes dos itens e os
+        // valores são os caminhos relativos retornados pela API de upload.
+        let customEstoqueImages = {};
+        try {
+            const storedCustomImages = localStorage.getItem('customEstoqueImages');
+            customEstoqueImages = storedCustomImages ? JSON.parse(storedCustomImages) : {};
+        } catch (e) {
+            customEstoqueImages = {};
+        }
         const API_BASE = '/api';
         let currentUser = null;
         let membros = [];
@@ -3576,17 +3588,24 @@ let editingEncomendaId = null;
                 });
                 Object.keys(groupedMat).forEach(name => {
                     const row = document.createElement('tr');
-                    // Gera caminho da imagem com base no nome do material. Usa a função
-                    // getItemImagePath se estiver disponível; caso contrário, usa
-                    // uma imagem padrão.
+                    // Gera caminho da imagem com base no nome do material
                     let imgSrc;
                     try {
                         imgSrc = typeof getItemImagePath === 'function' ? getItemImagePath(name) : '/static/images/items/default.jpg';
                     } catch (e) {
                         imgSrc = '/static/images/items/default.jpg';
                     }
+                    // Escapa aspas simples para inserção em atributos HTML
+                    const safeName = name.replace(/'/g, "\\'");
+                    // Verifica permissão do usuário para editar imagem
+                    const user = currentUser || JSON.parse(localStorage.getItem('user') || '{}');
+                    const canEditImage = user && ['admin','grande-mestre','mestre-dos-ventos'].includes(user.role);
+                    const actionBtn = canEditImage ? `<button class="btn-secondary" style="font-size:11px; padding:3px 6px; margin-left:6px;" onclick="editEstoqueItemImage('${safeName}', 'material')">🖼️</button>` : '';
                     row.innerHTML = `
-                        <td style="text-align:center;"><img src="${imgSrc}" alt="${name}" style="width:32px; height:32px; object-fit:contain; border-radius:4px;"></td>
+                        <td style="text-align:center;">
+                            <img src="${imgSrc}" alt="${name}" style="width:32px; height:32px; object-fit:contain; border-radius:4px;">
+                            ${actionBtn}
+                        </td>
                         <td>${name}</td>
                         <td>${groupedMat[name].quantidade}</td>
                         <td>R$ ${groupedMat[name].preco.toFixed(2)}</td>
@@ -3619,8 +3638,16 @@ let editingEncomendaId = null;
                     } catch (e) {
                         imgSrc = '/static/images/items/default.jpg';
                     }
+                    // Escapa aspas simples para uso em atributos HTML
+                    const safeName = name.replace(/'/g, "\\'");
+                    const user = currentUser || JSON.parse(localStorage.getItem('user') || '{}');
+                    const canEditImage = user && ['admin','grande-mestre','mestre-dos-ventos'].includes(user.role);
+                    const actionBtn = canEditImage ? `<button class="btn-secondary" style="font-size:11px; padding:3px 6px; margin-left:6px;" onclick="editEstoqueItemImage('${safeName}', 'municao')">🖼️</button>` : '';
                     row.innerHTML = `
-                        <td style="text-align:center;"><img src="${imgSrc}" alt="${nomeFormatado}" style="width:32px; height:32px; object-fit:contain; border-radius:4px;"></td>
+                        <td style="text-align:center;">
+                            <img src="${imgSrc}" alt="${nomeFormatado}" style="width:32px; height:32px; object-fit:contain; border-radius:4px;">
+                            ${actionBtn}
+                        </td>
                         <td>${nomeFormatado}</td>
                         <td>${groupedMun[name].quantidade}</td>
                         <td>R$ ${groupedMun[name].preco.toFixed(2)}</td>
@@ -3628,6 +3655,54 @@ let editingEncomendaId = null;
                     municoesBody.appendChild(row);
                 });
             }
+        }
+
+        /**
+         * Permite ao usuário enviar uma nova imagem para um item do estoque (materiais ou munições).
+         * A imagem selecionada é enviada ao servidor usando o endpoint /api/imagens/upload.
+         * O caminho retornado é salvo no objeto customEstoqueImages e persistido no localStorage,
+         * substituindo a imagem padrão. Após o upload, o estoque é recarregado para refletir
+         * imediatamente a alteração.
+         *
+         * @param {string} itemName Nome do item (deve ser exatamente como aparece na tabela)
+         * @param {string} tipo Tipo do item ('material' ou 'municao') – atualmente não é usado,
+         *        mas pode ser útil para futuras validações.
+         */
+        async function editEstoqueItemImage(itemName, tipo) {
+            // Cria input de arquivo dinâmico
+            const inputFile = document.createElement('input');
+            inputFile.type = 'file';
+            inputFile.accept = 'image/*';
+            inputFile.onchange = async () => {
+                const file = inputFile.files[0];
+                if (!file) return;
+                try {
+                    const formData = new FormData();
+                    formData.append('imagem', file);
+                    const response = await fetch(`${API_BASE}/imagens/upload`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${localStorage.getItem('authToken') || ''}`
+                        },
+                        body: formData
+                    });
+                    const respData = await response.json();
+                    if (!response.ok) {
+                        const errMsg = respData && respData.error ? respData.error : 'Erro ao enviar imagem';
+                        throw new Error(errMsg);
+                    }
+                    // Salva caminho retornado (sem barra inicial) no objeto custom
+                    customEstoqueImages[itemName] = respData.caminho;
+                    localStorage.setItem('customEstoqueImages', JSON.stringify(customEstoqueImages));
+                    alert('Imagem atualizada com sucesso');
+                    // Recarrega tabela de estoque
+                    loadEstoque();
+                } catch (error) {
+                    alert(error.message || 'Erro ao atualizar imagem');
+                }
+            };
+            // Dispara o seletor de arquivos
+            inputFile.click();
         }
 
         /**
@@ -5387,9 +5462,21 @@ let editingEncomendaId = null;
                 'Chave Ouro': 'chavedeouro.jpg',
                 'Chave Platina': 'chavedeplatina.jpg',
                 'C4': 'c4.jpg'
+                // Outros itens especiais
+                ,'Erva': 'h.jpg'
+                ,'Erva Rara': 'h.jpg'
+                ,'Desert MK1': 'colt45.jpg'
+                ,'Desert MK2': 'colt45.jpg'
+                ,'Desert MK3': 'colt45.jpg'
             };
             
-            // Busca exata primeiro
+            // Caso exista uma imagem personalizada para o estoque deste item, usa-a primeiro
+            if (customEstoqueImages[itemName]) {
+                // O caminho salvo no localStorage já começa em 'static/...'
+                return `/${customEstoqueImages[itemName]}`;
+            }
+
+            // Busca exata primeiro no mapa de imagens padrão
             if (imageMap[itemName]) {
                 return `/static/images/items/${imageMap[itemName]}`;
             }
@@ -6308,8 +6395,18 @@ let editingEncomendaId = null;
                     method: 'DELETE',
                     headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
                 });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || 'Erro ao excluir requisição');
+                // Obtém o texto da resposta para tratamento flexível. Alguns erros retornam HTML.
+                const text = await res.text();
+                let data;
+                try {
+                    data = JSON.parse(text);
+                } catch (e) {
+                    data = null;
+                }
+                if (!res.ok) {
+                    const msg = (data && data.error) ? data.error : text || 'Erro ao excluir requisição';
+                    throw new Error(msg);
+                }
                 loadInventarioFamilia();
             } catch (error) {
                 alert(error.message);
