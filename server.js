@@ -178,6 +178,21 @@ function initializeDatabase() {
         data_upload DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
 
+    // Tabela de cadastros pendentes
+    // Quando um usuário realiza um cadastro via login_simple.html, os dados são inseridos aqui.
+    // Após aprovação por um administrador/líder, o cadastro é movido para as tabelas usuais de
+    // usuarios e membros e removido desta tabela.
+    db.run(`CREATE TABLE IF NOT EXISTS cadastro_pendentes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL UNIQUE,
+        password TEXT NOT NULL,
+        nome TEXT NOT NULL,
+        rg TEXT,
+        telefone TEXT,
+        cargo TEXT DEFAULT 'acolito',
+        data_cadastro DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+
     // Criar tabela de inventário família. Por padrão usamos coluna
     // "nome" para identificar o item, mas se um banco antigo já
     // existe com coluna "item" em vez de "nome", a coluna antiga
@@ -624,8 +639,19 @@ app.post('/api/auth/login', (req, res) => {
             return res.status(500).json({ error: err.message });
         }
         if (!user || !bcrypt.compareSync(password, user.password)) {
-            return res.status(401).json({ error: 'Credenciais inválidas' });
+            // Se não encontrou o usuário ou a senha não bate, verifica se há cadastro pendente para este username
+            db.get('SELECT id FROM cadastro_pendentes WHERE username = ?', [username], (err2, pend) => {
+                if (err2) {
+                    return res.status(500).json({ error: err2.message });
+                }
+                if (pend) {
+                    return res.status(401).json({ error: 'Cadastro ainda não aprovado. Aguarde um administrador.' });
+                }
+                return res.status(401).json({ error: 'Credenciais inválidas' });
+            });
+            return;
         }
+        // Usuário encontrado, prossegue com geração de token
         const token = jwt.sign(
             { id: user.id, username: user.username, role: user.role },
             JWT_SECRET,
@@ -648,38 +674,35 @@ app.post('/api/auth/register', (req, res) => {
     if (!username || !password || !nome) {
         return res.status(400).json({ error: 'Dados incompletos para cadastro' });
     }
-    // Verificar se já existe usuário com o mesmo username
-    db.get('SELECT id FROM usuarios WHERE username = ?', [username], (err, row) => {
+    // Verificar se já existe usuário ou cadastro pendente com o mesmo username
+    db.get('SELECT id FROM usuarios WHERE username = ?', [username], (err, existingUser) => {
         if (err) {
             return res.status(500).json({ error: err.message });
         }
-        if (row) {
+        if (existingUser) {
             return res.status(400).json({ error: 'Nome de usuário já está em uso' });
         }
-        // Hash da senha
-        const hashed = bcrypt.hashSync(password, 10);
-        // Inserir usuário com role padrão 'membro'
-        db.run(
-            'INSERT INTO usuarios (username, password, role) VALUES (?, ?, ?)',
-            [username, hashed, 'membro'],
-            function (userErr) {
-                if (userErr) {
-                    return res.status(500).json({ error: userErr.message });
-                }
-                const usuarioId = this.lastID;
-                // Inserir membro associado
-                db.run(
-                    'INSERT INTO membros (nome, rg, telefone, cargo) VALUES (?, ?, ?, ?)',
-                    [nome, rg || null, telefone || null, 'membro'],
-                    function (mErr) {
-                        if (mErr) {
-                            return res.status(500).json({ error: mErr.message });
-                        }
-                        return res.json({ message: 'Cadastro realizado com sucesso' });
-                    }
-                );
+        db.get('SELECT id FROM cadastro_pendentes WHERE username = ?', [username], (err2, pendingRow) => {
+            if (err2) {
+                return res.status(500).json({ error: err2.message });
             }
-        );
+            if (pendingRow) {
+                return res.status(400).json({ error: 'Cadastro já está aguardando aprovação' });
+            }
+            // Hash da senha
+            const hashed = bcrypt.hashSync(password, 10);
+            // Insere o cadastro como pendente para aprovação
+            db.run(
+                'INSERT INTO cadastro_pendentes (username, password, nome, rg, telefone, cargo) VALUES (?, ?, ?, ?, ?, ?)',
+                [username, hashed, nome, rg || null, telefone || null, 'acolito'],
+                function (insertErr) {
+                    if (insertErr) {
+                        return res.status(500).json({ error: insertErr.message });
+                    }
+                    return res.json({ message: 'Cadastro realizado. Aguarde aprovação de um administrador.' });
+                }
+            );
+        });
     });
 });
 
@@ -2455,56 +2478,112 @@ app.post('/api/requisicoes-familia', (req, res) => {
     });
 });
 
-app.put('/api/requisicoes-familia/:id', (req, res) => {
+// Atualiza o status ou edita dados de uma requisição de materiais.
+// Se o corpo contiver `status`, a requisição terá o status atualizado.
+// Se contiver `item_id` e `quantidade`, a requisição será editada (somente se pendente).
+app.put('/api/requisicoes-familia/:id', authenticateToken, (req, res) => {
     const { id } = req.params;
-    const { status } = req.body;
+    const { status, item_id, quantidade } = req.body;
 
-    // Somente cargos administrativos ou de topo podem alterar o status de uma requisição de materiais.
-    // Usuários de hierarquias 3 a 6 podem criar requisições, mas não devem aprová-las ou cancelá-las.
-    const allowedRolesAlterarRequisicao = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
-    const userRole = req.user && req.user.role;
-    if (!userRole || !allowedRolesAlterarRequisicao.includes(userRole)) {
-        return res.status(403).json({ error: 'Acesso negado. Apenas administradores, Grande Mestres ou Mestres dos Ventos podem alterar o status de requisições.' });
+    // Cargos permitidos para aprovar/cancelar requisições ou editá-las
+    const allowedRoles = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    const user = req.user || {};
+    const userRole = user.role;
+
+    // Função para verificar permissão de manipular a requisição
+    function checkPermission(callback) {
+        db.get('SELECT * FROM requisicoes_familia WHERE id = ?', [id], (err, reqRow) => {
+            if (err) return res.status(500).json({ error: err.message });
+            if (!reqRow) return res.status(404).json({ error: 'Requisição não encontrada' });
+            const isRequester = user.username && user.username === reqRow.usuario;
+            const canManage = allowedRoles.includes(userRole) || (isRequester && reqRow.status === 'pendente');
+            if (!canManage) {
+                return res.status(403).json({ error: 'Acesso negado. Você não tem permissão para modificar esta requisição.' });
+            }
+            callback(reqRow);
+        });
     }
 
-    if (status === 'aprovada') {
-        // Buscar dados da requisição
-        db.get('SELECT item_id, quantidade FROM requisicoes_familia WHERE id = ?', [id], (err, req_row) => {
-            if (err) {
-                return res.status(500).json({ error: err.message });
-            }
-            if (!req_row) {
-                return res.status(404).json({ error: 'Requisição não encontrada' });
-            }
+    // Atualizar status se o campo status existir
+    if (typeof status !== 'undefined') {
+        checkPermission((reqRow) => {
+            // Normaliza o valor do status para comparação
+            const statusStr = String(status).toLowerCase();
+            const isAprovado = statusStr.startsWith('aprov');
 
-            // Baixar do inventário
-            db.run('UPDATE inventario_familia SET quantidade = quantidade - ?, data_atualizacao = CURRENT_TIMESTAMP WHERE id = ?', 
-                   [req_row.quantidade, req_row.item_id], function (err) {
-                if (err) {
-                    return res.status(500).json({ error: err.message });
-                }
-
-                // Atualizar status da requisição
+            if (isAprovado) {
+                // Para aprovar, debitar do estoque e definir status como 'aprovado'
+                db.run('UPDATE inventario_familia SET quantidade = quantidade - ?, data_atualizacao = CURRENT_TIMESTAMP WHERE id = ?',
+                    [reqRow.quantidade, reqRow.item_id], function (err) {
+                    if (err) return res.status(500).json({ error: err.message });
+                    const newStatus = 'aprovado';
+                    db.run('UPDATE requisicoes_familia SET status = ? WHERE id = ?', [newStatus, id], function (err2) {
+                        if (err2) return res.status(500).json({ error: err2.message });
+                        res.json({ message: 'Requisição aprovada e item baixado do inventário' });
+                    });
+                });
+            } else {
+                // Atualiza para o status solicitado (rejeitado, entregue, cancelado, etc.)
                 db.run('UPDATE requisicoes_familia SET status = ? WHERE id = ?', [status, id], function (err) {
-                    if (err) {
-                        return res.status(500).json({ error: err.message });
+                    if (err) return res.status(500).json({ error: err.message });
+                    if (this.changes === 0) {
+                        return res.status(404).json({ error: 'Requisição não encontrada' });
                     }
-                    res.json({ message: 'Requisição aprovada e item baixado do inventário' });
+                    res.json({ message: 'Status da requisição atualizado' });
+                });
+            }
+        });
+        return;
+    }
+
+    // Se item_id e quantidade são enviados, editar requisição pendente
+    if (typeof item_id !== 'undefined' && typeof quantidade !== 'undefined') {
+        const qtd = parseInt(quantidade);
+        if (isNaN(qtd) || qtd <= 0) {
+            return res.status(400).json({ error: 'Quantidade inválida' });
+        }
+        checkPermission((reqRow) => {
+            if (reqRow.status !== 'pendente') {
+                return res.status(400).json({ error: 'Apenas requisições pendentes podem ser editadas' });
+            }
+            db.get('SELECT quantidade FROM inventario_familia WHERE id = ?', [item_id], (err2, invRow) => {
+                if (err2) return res.status(500).json({ error: err2.message });
+                if (!invRow) return res.status(404).json({ error: 'Item do inventário não encontrado' });
+                if (invRow.quantidade < qtd) {
+                    return res.status(400).json({ error: 'Quantidade insuficiente no inventário para a nova requisição' });
+                }
+                db.run('UPDATE requisicoes_familia SET item_id = ?, quantidade = ?, data_solicitacao = CURRENT_TIMESTAMP WHERE id = ?',
+                    [item_id, qtd, id], function (err3) {
+                    if (err3) return res.status(500).json({ error: err3.message });
+                    res.json({ message: 'Requisição atualizada com sucesso' });
                 });
             });
         });
-    } else {
-        // Apenas atualizar status
-        db.run('UPDATE requisicoes_familia SET status = ? WHERE id = ?', [status, id], function (err) {
-            if (err) {
-                return res.status(500).json({ error: err.message });
-            }
-            if (this.changes === 0) {
-                return res.status(404).json({ error: 'Requisição não encontrada' });
-            }
-            res.json({ message: 'Status da requisição atualizado' });
-        });
+        return;
     }
+
+    // Nenhum campo válido fornecido
+    return res.status(400).json({ error: 'Dados inválidos para atualização de requisição' });
+});
+
+// Exclui uma requisição de materiais
+app.delete('/api/requisicoes-familia/:id', authenticateToken, (req, res) => {
+    const { id } = req.params;
+    const user = req.user || {};
+    const allowedRolesDel = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    db.get('SELECT * FROM requisicoes_familia WHERE id = ?', [id], (err, reqRow) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!reqRow) return res.status(404).json({ error: 'Requisição não encontrada' });
+        const isRequester = user.username && user.username === reqRow.usuario;
+        const canDelete = allowedRolesDel.includes(user.role) || (isRequester && reqRow.status === 'pendente');
+        if (!canDelete) {
+            return res.status(403).json({ error: 'Acesso negado. Você não tem permissão para excluir esta requisição.' });
+        }
+        db.run('DELETE FROM requisicoes_familia WHERE id = ?', [id], function (err2) {
+            if (err2) return res.status(500).json({ error: err2.message });
+            res.json({ message: 'Requisição excluída com sucesso' });
+        });
+    });
 });
 
 // Rotas de imagens
@@ -2822,6 +2901,61 @@ app.put('/api/membros/:id/cargo', authenticateToken, (req, res) => {
             return res.status(404).json({ error: 'Membro não encontrado' });
         }
         res.json({ message: 'Cargo atualizado com sucesso' });
+    });
+});
+
+// -----------------------------------------------------------------------------
+// Gerenciamento de cadastros pendentes
+//
+// Quando um usuário se registra pelo formulário de cadastro, seus dados são
+// armazenados na tabela `cadastro_pendentes`. Um administrador, Grande Mestre
+// ou Mestre dos Ventos pode listar esses cadastros e aprová-los, criando
+// registros definitivos em `usuarios` e `membros`.
+
+// Listar cadastros pendentes
+app.get('/api/usuarios/pendentes', authenticateToken, (req, res) => {
+    const allowed = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowed.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas admin, Grande Mestre ou Mestre dos Ventos podem visualizar cadastros pendentes.' });
+    }
+    db.all('SELECT id, username, nome, rg, telefone, cargo, data_cadastro FROM cadastro_pendentes ORDER BY data_cadastro', (err, rows) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json(rows);
+    });
+});
+
+// Aprovar um cadastro pendente
+app.put('/api/usuarios/:id/ativar', authenticateToken, (req, res) => {
+    const allowed = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowed.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas admin, Grande Mestre ou Mestre dos Ventos podem aprovar usuários.' });
+    }
+    const { id } = req.params;
+    const { role, cargo } = req.body;
+    const newRole = role || 'membro';
+    const newCargo = cargo || 'acolito';
+    db.get('SELECT * FROM cadastro_pendentes WHERE id = ?', [id], (err, pend) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!pend) return res.status(404).json({ error: 'Cadastro pendente não encontrado' });
+        db.get('SELECT id FROM usuarios WHERE username = ?', [pend.username], (err2, exists) => {
+            if (err2) return res.status(500).json({ error: err2.message });
+            if (exists) return res.status(400).json({ error: 'Nome de usuário já está em uso' });
+            // Cria usuário definitivo
+            db.run('INSERT INTO usuarios (username, password, role) VALUES (?, ?, ?)', [pend.username, pend.password, newRole], function(err3) {
+                if (err3) return res.status(500).json({ error: err3.message });
+                // Cria membro correspondente
+                db.run('INSERT INTO membros (nome, rg, telefone, cargo) VALUES (?, ?, ?, ?)', [pend.nome, pend.rg || null, pend.telefone || null, newCargo], function(err4) {
+                    if (err4) return res.status(500).json({ error: err4.message });
+                    // Remove cadastro pendente
+                    db.run('DELETE FROM cadastro_pendentes WHERE id = ?', [id], function(err5) {
+                        if (err5) return res.status(500).json({ error: err5.message });
+                        res.json({ message: 'Usuário aprovado com sucesso' });
+                    });
+                });
+            });
+        });
     });
 });
 
