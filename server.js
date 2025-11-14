@@ -64,7 +64,11 @@ const storage = multer.diskStorage({
     filename: (req, file, cb) => {
         const ext = path.extname(file.originalname);
         const name = path.basename(file.originalname, ext);
-        cb(null, `${name}${ext}`);
+        // Adicionar timestamp para evitar conflitos de nomes
+        const timestamp = Date.now();
+        // Limitar o nome para evitar nomes muito longos
+        const nameLimited = name.length > 50 ? name.substring(0, 50) : name;
+        cb(null, `${nameLimited}_${timestamp}${ext}`);
     }
 });
 
@@ -356,10 +360,13 @@ function initializeDatabase() {
         }
     });
 
-    // Criar índice único para imagens
-    db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_imagens_nome ON imagens(nome)', (err) => {
+    // Remover índice único de imagens se existir (permite imagens com mesmo nome)
+    // Isso permite que o mesmo arquivo seja usado em contextos diferentes
+    db.run('DROP INDEX IF EXISTS idx_imagens_nome', (err) => {
         if (err) {
-            console.error('Erro ao criar índice único em imagens:', err.message);
+            console.warn('Aviso ao remover índice único de imagens (pode não existir):', err.message);
+        } else {
+            console.log('Índice único de imagens removido - agora é permitido ter imagens com mesmo nome');
         }
     });
 
@@ -1814,8 +1821,58 @@ app.get('/api/rotas', authenticateToken, (req, res) => {
     });
 });
 
+// Função auxiliar para processar comprovante base64 e salvar arquivo
+function processarComprovanteBase64(comprovanteBase64, rotaId) {
+    return new Promise((resolve, reject) => {
+        if (!comprovanteBase64) {
+            return resolve(null);
+        }
+
+        try {
+            // Extrair o tipo MIME e os dados base64
+            const matches = comprovanteBase64.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+            if (!matches || matches.length !== 3) {
+                return reject(new Error('Formato de imagem base64 inválido'));
+            }
+
+            const mimeType = matches[1];
+            const base64Data = matches[2];
+            
+            // Determinar extensão do arquivo
+            let ext = '.jpg';
+            if (mimeType.includes('png')) ext = '.png';
+            else if (mimeType.includes('jpeg') || mimeType.includes('jpg')) ext = '.jpg';
+            else if (mimeType.includes('gif')) ext = '.gif';
+            else if (mimeType.includes('webp')) ext = '.webp';
+
+            // Criar diretório se não existir
+            const comprovantesDir = 'static/comprovantes';
+            if (!fs.existsSync(comprovantesDir)) {
+                fs.mkdirSync(comprovantesDir, { recursive: true });
+            }
+
+            // Nome do arquivo: comprovante_rota_{id}_{timestamp}.{ext}
+            const timestamp = Date.now();
+            const filename = `comprovante_rota_${rotaId}_${timestamp}${ext}`;
+            const filepath = path.join(comprovantesDir, filename);
+            const relativePath = `comprovantes/${filename}`;
+
+            // Converter base64 para buffer e salvar
+            const buffer = Buffer.from(base64Data, 'base64');
+            fs.writeFile(filepath, buffer, (err) => {
+                if (err) {
+                    return reject(err);
+                }
+                resolve(relativePath);
+            });
+        } catch (error) {
+            reject(error);
+        }
+    });
+}
+
 app.post('/api/rotas', authenticateToken, (req, res) => {
-    const { membro_id, quantidade, data_entrega } = req.body;
+    const { membro_id, quantidade, data_entrega, comprovante } = req.body;
     const qtdRotas = quantidade || 1;
     const membroId = parseInt(membro_id);
 
@@ -1857,6 +1914,7 @@ app.post('/api/rotas', authenticateToken, (req, res) => {
             ];
 
             const pagamentoTotal = 16000 * qtdRotas;
+            // Primeiro inserir a rota para obter o ID
             db.run('INSERT INTO rotas (membro_id, membro_nome, quantidade, data_entrega, status, pagamento) VALUES (?, ?, ?, ?, ?, ?)', 
                    [membroId, membro.nome, qtdRotas, data_entrega, 'entregue', pagamentoTotal], function (err) {
                 if (err) {
@@ -1866,34 +1924,87 @@ app.post('/api/rotas', authenticateToken, (req, res) => {
                     return res.status(500).json({ error: err.message });
                 }
 
-                // Adicionar materiais ao estoque (produção)
-                let materiaisProcessados = 0;
-                let erroMaterial = null;
+                const rotaId = this.lastID;
 
-                materiaisNecessarios.forEach(material => {
-                    db.run('UPDATE estoque SET quantidade = quantidade + ?, data_atualizacao = CURRENT_TIMESTAMP WHERE tipo = "material" AND nome = ?', 
-                           [material.quantidade, material.nome], function(errUpdate) {
-                        materiaisProcessados++;
-                        
-                        if (errUpdate && !erroMaterial) {
-                            erroMaterial = errUpdate;
-                        }
+                // Processar comprovante se fornecido
+                const processarComprovante = comprovante ? 
+                    processarComprovanteBase64(comprovante, rotaId) : 
+                    Promise.resolve(null);
 
-                        // Quando todos os materiais foram processados
-                        if (materiaisProcessados === materiaisNecessarios.length) {
-                            if (erroMaterial) {
-                                console.error('Erro ao adicionar material:', erroMaterial.message);
-                                return res.status(500).json({ 
-                                    error: 'Rota criada mas erro ao adicionar materiais: ' + erroMaterial.message 
-                                });
+                processarComprovante.then(comprovantePath => {
+                    // Se houver comprovante, atualizar o campo comprovante_path
+                    if (comprovantePath) {
+                        db.run('UPDATE rotas SET comprovante_path = ? WHERE id = ?', 
+                               [comprovantePath, rotaId], (errUpdate) => {
+                            if (errUpdate) {
+                                console.error('Erro ao atualizar comprovante_path:', errUpdate.message);
+                            }
+                        });
+                    }
+
+                    // Adicionar materiais ao estoque (produção)
+                    let materiaisProcessados = 0;
+                    let erroMaterial = null;
+
+                    materiaisNecessarios.forEach(material => {
+                        db.run('UPDATE estoque SET quantidade = quantidade + ?, data_atualizacao = CURRENT_TIMESTAMP WHERE tipo = "material" AND nome = ?', 
+                               [material.quantidade, material.nome], function(errUpdate) {
+                            materiaisProcessados++;
+                            
+                            if (errUpdate && !erroMaterial) {
+                                erroMaterial = errUpdate;
                             }
 
-                            res.json({
-                                message: `Rota cadastrada com sucesso! Materiais adicionados ao estoque: ${materiaisNecessarios.map(m => `${m.quantidade} ${m.nome}`).join(', ')}`,
-                                id: this.lastID,
-                                pagamento: pagamentoTotal
-                            });
-                        }
+                            // Quando todos os materiais foram processados
+                            if (materiaisProcessados === materiaisNecessarios.length) {
+                                if (erroMaterial) {
+                                    console.error('Erro ao adicionar material:', erroMaterial.message);
+                                    return res.status(500).json({ 
+                                        error: 'Rota criada mas erro ao adicionar materiais: ' + erroMaterial.message 
+                                    });
+                                }
+
+                                res.json({
+                                    message: `Rota cadastrada com sucesso! Materiais adicionados ao estoque: ${materiaisNecessarios.map(m => `${m.quantidade} ${m.nome}`).join(', ')}`,
+                                    id: rotaId,
+                                    pagamento: pagamentoTotal,
+                                    comprovante_path: comprovantePath
+                                });
+                            }
+                        });
+                    });
+                }).catch(comprovanteErr => {
+                    console.error('Erro ao processar comprovante:', comprovanteErr.message);
+                    // Mesmo com erro no comprovante, continuar com a criação da rota
+                    // Adicionar materiais ao estoque (produção)
+                    let materiaisProcessados = 0;
+                    let erroMaterial = null;
+
+                    materiaisNecessarios.forEach(material => {
+                        db.run('UPDATE estoque SET quantidade = quantidade + ?, data_atualizacao = CURRENT_TIMESTAMP WHERE tipo = "material" AND nome = ?', 
+                               [material.quantidade, material.nome], function(errUpdate) {
+                            materiaisProcessados++;
+                            
+                            if (errUpdate && !erroMaterial) {
+                                erroMaterial = errUpdate;
+                            }
+
+                            // Quando todos os materiais foram processados
+                            if (materiaisProcessados === materiaisNecessarios.length) {
+                                if (erroMaterial) {
+                                    console.error('Erro ao adicionar material:', erroMaterial.message);
+                                    return res.status(500).json({ 
+                                        error: 'Rota criada mas erro ao adicionar materiais: ' + erroMaterial.message 
+                                    });
+                                }
+
+                                res.json({
+                                    message: `Rota cadastrada com sucesso! Materiais adicionados ao estoque: ${materiaisNecessarios.map(m => `${m.quantidade} ${m.nome}`).join(', ')}. Aviso: Erro ao processar comprovante.`,
+                                    id: rotaId,
+                                    pagamento: pagamentoTotal
+                                });
+                            }
+                        });
                     });
                 });
             });
@@ -2745,9 +2856,7 @@ app.post('/api/imagens/upload', upload.single('imagem'), (req, res) => {
     const insertQuery = `INSERT INTO imagens (${cols.join(', ')}) VALUES (${placeholders})`;
     db.run(insertQuery, vals, function (err) {
         if (err) {
-            if (err.message && err.message.includes('UNIQUE constraint failed')) {
-                return res.status(400).json({ error: 'Imagem com este nome já existe' });
-            }
+            // Removida a verificação de UNIQUE constraint - agora permite imagens com mesmo nome
             return res.status(500).json({ error: err.message });
         }
         res.json({
