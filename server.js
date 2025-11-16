@@ -182,6 +182,13 @@ function initializeDatabase() {
         data_upload DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
 
+    // Tabela para mapear imagens personalizadas de itens de estoque (materiais/munições)
+    db.run(`CREATE TABLE IF NOT EXISTS estoque_imagens (
+        item TEXT PRIMARY KEY,
+        caminho TEXT NOT NULL,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+
     // Tabela de cadastros pendentes
     // Quando um usuário realiza um cadastro via login_simple.html, os dados são inseridos aqui.
     // Após aprovação por um administrador/líder, o cadastro é movido para as tabelas usuais de
@@ -3098,6 +3105,30 @@ app.get('/api/imagens', (req, res) => {
         }
         res.json(rows);
     });
+});
+
+// Mapas globais de imagens do estoque
+app.get('/api/estoque/imagens', (req, res) => {
+    db.all('SELECT item, caminho FROM estoque_imagens', (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+    });
+});
+
+app.put('/api/estoque/imagens', authenticateToken, (req, res) => {
+    const { item, caminho } = req.body || {};
+    // Apenas administradores ou os dois maiores cargos podem definir imagens globais
+    if (!req.user || !['admin','grande-mestre','mestre-dos-ventos'].includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
+    if (!item || !caminho) {
+        return res.status(400).json({ error: 'Parâmetros inválidos: item e caminho são obrigatórios' });
+    }
+    db.run('INSERT INTO estoque_imagens (item, caminho, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(item) DO UPDATE SET caminho = excluded.caminho, updated_at = CURRENT_TIMESTAMP',
+        [item, caminho], function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ message: 'Imagem do item atualizada', item, caminho });
+        });
 });
 
 app.post('/api/imagens/upload', upload.single('imagem'), (req, res) => {
