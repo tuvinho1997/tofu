@@ -2976,26 +2976,38 @@ app.post('/api/inventario-familia/atualizar-multiplos', authenticateToken, (req,
 
 // Rotas de requisições família
 app.get('/api/requisicoes-familia', (req, res) => {
-    // Seleciona requisições com info do item e do solicitante
-    const nomeCol = inventarioFamiliaNameColumn ? `i.${inventarioFamiliaNameColumn} as item_nome` : 'NULL as item_nome';
-    const query = `
-        SELECT 
-            r.*,
-            ${nomeCol},
-            i.preco as item_preco,
-            r.usuario as solicitante_nome,
-            COALESCE(u.role, 'membro') as solicitante_cargo,
-            COALESCE(r.data_requisicao, r.data_solicitacao, r.data_criacao) as data_criacao
-        FROM requisicoes_familia r
-        LEFT JOIN inventario_familia i ON r.item_id = i.id
-        LEFT JOIN usuarios u ON u.username = r.usuario
-        ORDER BY COALESCE(r.data_requisicao, r.data_solicitacao, r.data_criacao) DESC
-    `;
-    db.all(query, (err, rows) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
+    // Determina dinamicamente qual coluna de data existe no banco
+    db.all('PRAGMA table_info(requisicoes_familia)', (schemaErr, cols) => {
+        if (schemaErr) {
+            return res.status(500).json({ error: schemaErr.message });
         }
-        res.json(rows);
+        const colNames = Array.isArray(cols) ? cols.map(c => c.name) : [];
+        const dateCol = colNames.includes('data_requisicao')
+            ? 'r.data_requisicao'
+            : (colNames.includes('data_solicitacao')
+                ? 'r.data_solicitacao'
+                : (colNames.includes('data_criacao') ? 'r.data_criacao' : 'NULL'));
+        // Seleciona requisições com info do item e do solicitante
+        const nomeCol = inventarioFamiliaNameColumn ? `i.${inventarioFamiliaNameColumn} as item_nome` : 'NULL as item_nome';
+        const query = `
+            SELECT 
+                r.*,
+                ${nomeCol},
+                i.preco as item_preco,
+                r.usuario as solicitante_nome,
+                COALESCE(u.role, 'membro') as solicitante_cargo,
+                ${dateCol} as data_criacao
+            FROM requisicoes_familia r
+            LEFT JOIN inventario_familia i ON r.item_id = i.id
+            LEFT JOIN usuarios u ON u.username = r.usuario
+            ORDER BY ${dateCol} DESC
+        `;
+        db.all(query, (err, rows) => {
+            if (err) {
+                return res.status(500).json({ error: err.message });
+            }
+            res.json(rows);
+        });
     });
 });
 
