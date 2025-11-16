@@ -2930,13 +2930,13 @@ let editingEncomendaId = null;
                         acoesHTML += `<button class="btn-primary" style="background: #3498db; padding: 6px 12px; font-size: 12px; margin-right: 5px;" onclick="lancarRota(${rota.id})">Lançar</button>`;
                     }
                 }
-                if (rota.status === 'entregue') {
+                if (rota.status === 'entregue' || rota.status === 'pago') {
                     // Debug: log para verificar os valores
                     console.log('Rota entregue:', rota.id, 'Pagamento:', rota.pagamento, 'Pagante:', rota.pagante_username);
                     console.log('Usuário atual role:', currentUser ? currentUser.role : 'N/A');
                     
-                    // Se o pagamento ainda não foi efetuado, exibe botão para lançar pagamento (somente cargos de alto escalão)
-                    if (currentUser && ['admin','grande-mestre','mestre-dos-ventos'].includes(currentUser.role)) {
+                    // Exibe botão Pagar apenas se ainda não houve pagamento (sem data_pagamento/pagante)
+                    if (currentUser && ['admin','grande-mestre','mestre-dos-ventos'].includes(currentUser.role) && !rota.data_pagamento && !rota.pagante_username && rota.status === 'entregue') {
                         acoesHTML += `<button class="btn-primary" style="background: #27ae60; padding: 6px 12px; font-size: 12px; margin-right: 5px;" onclick="openPagamentoModal(${rota.id})">Pagar</button>`;
                     }
                     
@@ -2953,7 +2953,7 @@ let editingEncomendaId = null;
                     <td>${rota.membro_nome}</td>
                     <td>${rota.quantidade}</td>
                     <td>${new Date(rota.data_entrega).toLocaleDateString('pt-BR')}</td>
-                    <td><span style="color: ${rota.status === 'entregue' ? '#2ecc71' : '#f39c12'}">${rota.status}</span></td>
+                    <td><span style="color: ${rota.status === 'pago' ? '#27ae60' : (rota.status === 'entregue' ? '#2ecc71' : '#f39c12')}">${rota.status}</span></td>
                     <td>R$ ${rota.pagamento ? parseFloat(rota.pagamento).toFixed(2) : '0.00'}</td>
                     <td>${rota.pagante_username ? rota.pagante_username : '-'}</td>
                     <td>${acoesHTML}</td>
