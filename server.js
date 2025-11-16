@@ -3294,6 +3294,11 @@ app.put('/api/rotas/:id/pagamento', authenticateToken, (req, res) => {
             if (!usuario) {
                 return res.status(404).json({ error: 'Usuário pagante não encontrado' });
             }
+            // Restringir quem pode ser pagante: somente os dois maiores cargos
+            const allowedPagantes = ['grande-mestre', 'mestre-dos-ventos'];
+            if (!allowedPagantes.includes(usuario.role)) {
+                return res.status(400).json({ error: 'Apenas Grande Mestre ou Mestre dos Ventos podem ser pagantes' });
+            }
 
             // Registrar o pagamento e marcar status como 'pago'
             const dataPagamento = new Date().toISOString();
