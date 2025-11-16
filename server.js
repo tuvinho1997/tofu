@@ -2963,11 +2963,11 @@ app.get('/api/requisicoes-familia', (req, res) => {
             i.preco as item_preco,
             r.usuario as solicitante_nome,
             COALESCE(u.role, 'membro') as solicitante_cargo,
-            r.data_requisicao as data_criacao
+            COALESCE(r.data_requisicao, r.data_solicitacao, r.data_criacao) as data_criacao
         FROM requisicoes_familia r
         LEFT JOIN inventario_familia i ON r.item_id = i.id
         LEFT JOIN usuarios u ON u.username = r.usuario
-        ORDER BY r.data_requisicao DESC
+        ORDER BY COALESCE(r.data_requisicao, r.data_solicitacao, r.data_criacao) DESC
     `;
     db.all(query, (err, rows) => {
         if (err) {
