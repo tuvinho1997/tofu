@@ -3638,6 +3638,25 @@ let editingEncomendaId = null;
                 const data = await response.json();
 
                 if (response.ok) {
+                    // Carrega mapeamentos globais de imagens do estoque do servidor e mescla no cache local
+                    try {
+                        const mapRes = await fetch(`${API_BASE}/estoque/imagens`);
+                        if (mapRes.ok) {
+                            const mappings = await mapRes.json();
+                            if (Array.isArray(mappings)) {
+                                // Atualiza customEstoqueImages com os valores do servidor
+                                customEstoqueImages = customEstoqueImages || {};
+                                mappings.forEach(m => {
+                                    if (m && m.item && m.caminho) {
+                                        customEstoqueImages[m.item] = m.caminho;
+                                    }
+                                });
+                                localStorage.setItem('customEstoqueImages', JSON.stringify(customEstoqueImages));
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('Falha ao carregar mapas de imagens do estoque:', e);
+                    }
                     // A API de estoque pode retornar um array simples ou um objeto.
                     // Se for um array, agrupamos itens por tipo para manter o formato esperado
                     // pelas funções de renderização (materiais e municoes).
@@ -3797,6 +3816,19 @@ let editingEncomendaId = null;
                     customEstoqueImages[itemName] = respData.caminho;
                     localStorage.setItem('customEstoqueImages', JSON.stringify(customEstoqueImages));
                     alert('Imagem atualizada com sucesso');
+                    // Salva também no servidor para que todos vejam
+                    try {
+                        await fetch(`${API_BASE}/estoque/imagens`, {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${localStorage.getItem('authToken') || ''}`
+                            },
+                            body: JSON.stringify({ item: itemName, caminho: respData.caminho })
+                        });
+                    } catch (e) {
+                        console.warn('Falha ao salvar imagem global do estoque:', e);
+                    }
                     // Recarrega tabela de estoque
                     loadEstoque();
                 } catch (error) {
