@@ -247,12 +247,34 @@ function initializeDatabase() {
     db.all('PRAGMA table_info(requisicoes_familia)', (err, cols) => {
         if (!err && Array.isArray(cols)) {
             const hasUsuario = cols.some(c => c.name === 'usuario');
+            const hasDataRequisicao = cols.some(c => c.name === 'data_requisicao');
+            const hasDataSolicitacao = cols.some(c => c.name === 'data_solicitacao');
             if (!hasUsuario) {
                 db.run('ALTER TABLE requisicoes_familia ADD COLUMN usuario TEXT', (altErr) => {
                     if (altErr) {
                         console.warn('Não foi possível adicionar a coluna usuario em requisicoes_familia:', altErr.message);
                     } else {
                         console.log('Coluna usuario adicionada à tabela requisicoes_familia');
+                    }
+                });
+            }
+            // Alguns bancos antigos usam data_solicitacao; outros, data_requisicao.
+            // Garantimos que ambas existam para compatibilidade com consultas.
+            if (!hasDataRequisicao) {
+                db.run('ALTER TABLE requisicoes_familia ADD COLUMN data_requisicao DATETIME', (altErr) => {
+                    if (altErr) {
+                        console.warn('Não foi possível adicionar a coluna data_requisicao em requisicoes_familia:', altErr.message);
+                    } else {
+                        console.log('Coluna data_requisicao adicionada à tabela requisicoes_familia');
+                    }
+                });
+            }
+            if (!hasDataSolicitacao) {
+                db.run('ALTER TABLE requisicoes_familia ADD COLUMN data_solicitacao DATETIME', (altErr) => {
+                    if (altErr) {
+                        console.warn('Não foi possível adicionar a coluna data_solicitacao em requisicoes_familia:', altErr.message);
+                    } else {
+                        console.log('Coluna data_solicitacao adicionada à tabela requisicoes_familia');
                     }
                 });
             }
