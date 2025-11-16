@@ -2969,8 +2969,10 @@ app.get('/api/requisicoes-familia', (req, res) => {
     });
 });
 
-app.post('/api/requisicoes-familia', (req, res) => {
-    const { item_id, quantidade, usuario } = req.body;
+app.post('/api/requisicoes-familia', authenticateToken, (req, res) => {
+    const { item_id, quantidade } = req.body;
+    // Captura automaticamente o usuário autenticado; mantém fallback para compatibilidade
+    const usuario = (req.user && req.user.username) ? req.user.username : (req.body && req.body.usuario) || null;
 
     // Verificar se há quantidade suficiente no inventário
     db.get('SELECT quantidade FROM inventario_familia WHERE id = ?', [item_id], (err, row) => {
