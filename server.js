@@ -239,11 +239,25 @@ function initializeDatabase() {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         item_id INTEGER,
         quantidade INTEGER,
-        usuario TEXT,
         status TEXT DEFAULT 'pendente',
         data_requisicao DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (item_id) REFERENCES inventario_familia (id)
     )`);
+    // Migração: garantir coluna 'usuario' em bancos antigos
+    db.all('PRAGMA table_info(requisicoes_familia)', (err, cols) => {
+        if (!err && Array.isArray(cols)) {
+            const hasUsuario = cols.some(c => c.name === 'usuario');
+            if (!hasUsuario) {
+                db.run('ALTER TABLE requisicoes_familia ADD COLUMN usuario TEXT', (altErr) => {
+                    if (altErr) {
+                        console.warn('Não foi possível adicionar a coluna usuario em requisicoes_familia:', altErr.message);
+                    } else {
+                        console.log('Coluna usuario adicionada à tabela requisicoes_familia');
+                    }
+                });
+            }
+        }
+    });
 
     // Criar tabela de histórico do inventário família
     db.run(`CREATE TABLE IF NOT EXISTS historico_inventario_familia (
