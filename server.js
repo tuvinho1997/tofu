@@ -260,23 +260,14 @@ function initializeDatabase() {
         data_saida DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
 
-    // Remover duplicatas de rotas antes de criar o índice único. Isso é necessário porque
-    // do índice único abaixo poderia falhar se houver duplicidades já
-    // cadastradas.
-    db.run(`DELETE FROM rotas
-            WHERE rowid NOT IN (SELECT MIN(rowid) FROM rotas GROUP BY membro_id, data_entrega)`, (err) => {
-        if (err) {
-            console.error('Erro ao remover duplicatas de rotas:', err.message);
+    // Permitir múltiplas rotas no mesmo dia para o mesmo membro:
+    // Remover índice único se existir para não bloquear cadastros repetidos por data.
+    db.run('DROP INDEX IF EXISTS idx_rotas_membro_data', (idxDropErr) => {
+        if (idxDropErr) {
+            console.warn('Falha ao remover índice único de rotas (pode não existir):', idxDropErr.message);
+        } else {
+            console.log('Índice único de rotas removido (permitindo múltiplas rotas por membro/data).');
         }
-        // Cria um índice único para impedir a criação de mais de uma rota
-        // para o mesmo membro e data de entrega.  Isso garante que
-        // generateRotasParaProximaSemana() não insira rotas duplicadas
-        // quando o servidor reinicia.
-        db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_rotas_membro_data ON rotas(membro_id, data_entrega)', (idxErr) => {
-            if (idxErr) {
-                console.error('Erro ao criar índice único em rotas:', idxErr.message);
-            }
-        });
     });
 
     // Criar índice único para famílias
@@ -561,6 +552,7 @@ function initializeDatabase() {
     // Inserir valores padrão de materiais por rota se não existirem
     const materiaisPadrao = [
         { material: 'Alumínio', quantidade: 160 },
+        { material: 'Cobre', quantidade: 160 },
         { material: 'Emb Plástica', quantidade: 160 },
         { material: 'Ferro', quantidade: 160 },
         { material: 'Titânio', quantidade: 13 }
@@ -2205,6 +2197,7 @@ app.post('/api/rotas', authenticateToken, (req, res) => {
             // Calcular materiais necessários usando valores configurados (ou padrão se não configurado)
             const materiaisNecessarios = [
                 { nome: 'Alumínio', quantidade: (materiaisConfig['Alumínio'] || 160) * qtdRotas },
+                { nome: 'Cobre', quantidade: (materiaisConfig['Cobre'] || 160) * qtdRotas },
                 { nome: 'Emb Plástica', quantidade: (materiaisConfig['Emb Plástica'] || 160) * qtdRotas },
                 { nome: 'Ferro', quantidade: (materiaisConfig['Ferro'] || 160) * qtdRotas },
                 { nome: 'Titânio', quantidade: (materiaisConfig['Titânio'] || 13) * qtdRotas }
@@ -2215,9 +2208,7 @@ app.post('/api/rotas', authenticateToken, (req, res) => {
             db.run('INSERT INTO rotas (membro_id, membro_nome, quantidade, data_entrega, status, pagamento) VALUES (?, ?, ?, ?, ?, ?)', 
                    [membroId, membro.nome, qtdRotas, data_entrega, 'entregue', pagamentoTotal], function (err) {
                 if (err) {
-                    if (err.message.includes('UNIQUE constraint failed')) {
-                        return res.status(400).json({ error: 'Já existe uma rota para este membro nesta data' });
-                    }
+                    // Sem restrição de unicidade por membro/data; retornar erro genérico
                     return res.status(500).json({ error: err.message });
                 }
 
@@ -2409,6 +2400,7 @@ function getConfigMateriaisRota() {
             // Valores padrão se não configurado
             resolve({
                 'Alumínio': config['Alumínio'] || 160,
+                'Cobre': config['Cobre'] || 160,
                 'Emb Plástica': config['Emb Plástica'] || 160,
                 'Ferro': config['Ferro'] || 160,
                 'Titânio': config['Titânio'] || 13
@@ -2429,6 +2421,7 @@ function removerMateriaisPorRota(qtd) {
         getConfigMateriaisRota().then(config => {
             const updates = [
                 { nome: 'Alumínio', quantidade: config['Alumínio'] * quantidadeRota },
+                { nome: 'Cobre', quantidade: config['Cobre'] * quantidadeRota },
                 { nome: 'Emb Plástica', quantidade: config['Emb Plástica'] * quantidadeRota },
                 { nome: 'Ferro', quantidade: config['Ferro'] * quantidadeRota },
                 { nome: 'Titânio', quantidade: config['Titânio'] * quantidadeRota }
@@ -2491,6 +2484,7 @@ function adicionarMateriaisPorRota(qtd) {
         getConfigMateriaisRota().then(config => {
             const updates = [
                 { nome: 'Alumínio', quantidade: config['Alumínio'] * quantidadeRota },
+                { nome: 'Cobre', quantidade: config['Cobre'] * quantidadeRota },
                 { nome: 'Emb Plástica', quantidade: config['Emb Plástica'] * quantidadeRota },
                 { nome: 'Ferro', quantidade: config['Ferro'] * quantidadeRota },
                 { nome: 'Titânio', quantidade: config['Titânio'] * quantidadeRota }
@@ -3279,11 +3273,7 @@ app.put('/api/rotas/:id/pagamento', authenticateToken, (req, res) => {
     const { id } = req.params;
     const { pagante_id } = req.body;
 
-    // Somente administradores ou os cargos mais altos podem registrar pagamentos de rotas
-    const allowedRolesPagamento = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
-    if (!req.user || !allowedRolesPagamento.includes(req.user.role)) {
-        return res.status(403).json({ error: 'Acesso negado. Apenas administradores, Grande Mestres ou Mestres dos Ventos podem registrar pagamentos de rotas.' });
-    }
+    // Qualquer usuário autenticado pode registrar pagamento de rota
 
     if (!pagante_id) {
         return res.status(400).json({ error: 'ID do pagante é obrigatório' });
@@ -3301,17 +3291,13 @@ app.put('/api/rotas/:id/pagamento', authenticateToken, (req, res) => {
             return res.status(400).json({ error: 'Só é possível registrar pagamento para rotas entregues' });
         }
 
-        // Verificar se o usuário pagante existe e tem permissão para registrar pagamentos
+        // Verificar se o usuário pagante existe
         db.get('SELECT username, role FROM usuarios WHERE id = ?', [pagante_id], (errUser, usuario) => {
             if (errUser) {
                 return res.status(500).json({ error: errUser.message });
             }
             if (!usuario) {
                 return res.status(404).json({ error: 'Usuário pagante não encontrado' });
-            }
-            const rolesPagantesPermitidos = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
-            if (!rolesPagantesPermitidos.includes(usuario.role)) {
-                return res.status(403).json({ error: 'Apenas administradores, Grande Mestres ou Mestres dos Ventos podem registrar pagamentos' });
             }
 
             // Registrar o pagamento
