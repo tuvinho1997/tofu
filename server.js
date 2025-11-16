@@ -567,20 +567,15 @@ function initializeDatabase() {
     db.run(`INSERT OR IGNORE INTO usuarios (username, password, role) VALUES (?, ?, ?)`, 
            ['tofu', hashedPassword, 'admin']);
 
-    // Criar usuário líder padrão para testes
-    const hashedLiderPassword = bcrypt.hashSync('lider$2025', 10);
-    db.run(`INSERT OR IGNORE INTO usuarios (username, password, role) VALUES (?, ?, ?)`,
-           ['lider', hashedLiderPassword, 'lider']);
-
-    // Criar usuário gerente padrão para testes
-    const hashedGerentePassword = bcrypt.hashSync('gerente$2025', 10);
-    db.run(`INSERT OR IGNORE INTO usuarios (username, password, role) VALUES (?, ?, ?)`,
-           ['gerente', hashedGerentePassword, 'gerente']);
-
-    // Criar usuário membro padrão para testes
-    const hashedMembroPassword = bcrypt.hashSync('membro$2025', 10);
-    db.run(`INSERT OR IGNORE INTO usuarios (username, password, role) VALUES (?, ?, ?)`,
-           ['membro', hashedMembroPassword, 'membro']);
+    // Remover usuários de teste legados para evitar poluir listas de seleção
+    // Mantém apenas o admin padrão "tofu" e os usuários reais criados pelo sistema
+    db.run(`DELETE FROM usuarios WHERE username IN ('lider', 'gerente', 'membro')`, function(err) {
+        if (err) {
+            console.warn('Não foi possível remover usuários de teste legados:', err.message);
+        } else if (this.changes > 0) {
+            console.log(`Usuários de teste removidos: ${this.changes}`);
+        }
+    });
 
     // Corrigir estoque negativo (se existir)
     corrigirEstoqueNegativo();
@@ -3300,10 +3295,10 @@ app.put('/api/rotas/:id/pagamento', authenticateToken, (req, res) => {
                 return res.status(404).json({ error: 'Usuário pagante não encontrado' });
             }
 
-            // Registrar o pagamento
+            // Registrar o pagamento e marcar status como 'pago'
             const dataPagamento = new Date().toISOString();
-            db.run('UPDATE rotas SET pagante_username = ?, data_pagamento = ? WHERE id = ?', 
-                   [usuario.username, dataPagamento, id], function(err) {
+            db.run('UPDATE rotas SET pagante_username = ?, data_pagamento = ?, status = ? WHERE id = ?', 
+                   [usuario.username, dataPagamento, 'pago', id], function(err) {
                 if (err) {
                     return res.status(500).json({ error: err.message });
                 }
@@ -3311,7 +3306,8 @@ app.put('/api/rotas/:id/pagamento', authenticateToken, (req, res) => {
                 res.json({ 
                     message: 'Pagamento registrado com sucesso',
                     pagante: usuario.username,
-                    data_pagamento: dataPagamento
+                    data_pagamento: dataPagamento,
+                    status: 'pago'
                 });
             });
         });
