@@ -5361,8 +5361,8 @@ let editingEncomendaId = null;
         }
 
         /**
-         * Carrega os membros com cargo de líder e administrador e popula o seletor do modal de pagamento.
-         * Busca diretamente na tabela de membros onde temos os cargos.
+         * Carrega usuários disponíveis para serem pagantes e popula o seletor do modal de pagamento.
+         * Busca na API de usuários (ids da tabela usuarios), pois o backend espera usuarios.id.
          */
         async function loadLideres() {
             const select = document.getElementById('pagamentoLiderSelect');
@@ -5376,42 +5376,33 @@ let editingEncomendaId = null;
             select.innerHTML = '<option value="">Selecione um líder...</option>';
             
             try {
-                console.log('Buscando membros com cargos de líder/gerente...');
-                
-                // Busca todos os membros (todos podem ver os líderes)
-                const membrosRes = await fetch(`${API_BASE}/membros`);
-                console.log('Resposta da API membros:', membrosRes.status, membrosRes.ok);
-                
-                if (membrosRes.ok) {
-                    const membros = await membrosRes.json();
-                    console.log('Membros retornados:', membros);
-                    
-                    // Filtra apenas membros com cargos de alto escalão (Grande Mestre ou Mestre dos Ventos)
-                    const lideres = Array.isArray(membros) ? membros.filter(m => 
-                        ['grande-mestre','mestre-dos-ventos'].includes(m.cargo)
-                    ) : [];
-                    
-                    console.log('Líderes filtrados por cargo:', lideres);
-                    
-                    if (lideres.length > 0) {
-                        lideres.forEach(membro => {
-                            const opt = document.createElement('option');
-                            opt.value = membro.id;
-                            opt.textContent = `${membro.nome} (${membro.cargo})`;
-                            select.appendChild(opt);
-                        });
-                        console.log(`Adicionados ${lideres.length} líderes ao select`);
-                    } else {
-                        console.log('Nenhum membro com cargo de líder encontrado');
-
-                    }
+                console.log('Buscando usuários para lista de pagantes...');
+                const token = localStorage.getItem('authToken');
+                const resp = await fetch(`${API_BASE}/usuarios`, {
+                    headers: { 'Authorization': token ? 'Bearer ' + token : '' }
+                });
+                console.log('Resposta da API usuarios:', resp.status, resp.ok);
+                if (resp.ok) {
+                    const usuarios = await resp.json();
+                    console.log('Usuários retornados:', usuarios);
+                    // Por padrão, permita selecionar qualquer usuário como pagante.
+                    // Ordena por username para melhor UX.
+                    const sorted = Array.isArray(usuarios) ? usuarios.slice().sort((a,b) => (a.username||'').localeCompare(b.username||'')) : [];
+                    sorted.forEach(u => {
+                        const opt = document.createElement('option');
+                        opt.value = u.id; // importante: enviar usuarios.id
+                        opt.textContent = `${u.username} (${u.role})`;
+                        select.appendChild(opt);
+                    });
+                    console.log(`Adicionados ${sorted.length} usuários ao select de pagante`);
                 } else {
-                    console.error('Erro na API membros:', await membrosRes.text());
+                    const errText = await resp.text();
+                    console.error('Erro na API usuarios:', errText);
                 }
                 
                 // Se não há opções, adiciona uma mensagem
                 if (select.options.length <= 1) {
-                    select.innerHTML = '<option value="">Nenhum líder disponível</option>';
+                    select.innerHTML = '<option value="">Nenhum usuário disponível</option>';
                     console.log('Nenhuma opção encontrada, mostrando mensagem padrão');
                 }
                 
@@ -5419,8 +5410,8 @@ let editingEncomendaId = null;
                 
             } catch (err) {
                 console.error('Erro ao carregar líderes:', err);
-                // Fallback: mostra apenas o usuário atual se for cargo de alto escalão
-                if (currentUser && ['grande-mestre','mestre-dos-ventos','admin'].includes(currentUser.role)) {
+                // Fallback: mostra apenas o usuário atual (se houver id)
+                if (currentUser && currentUser.id) {
                     const opt = document.createElement('option');
                     opt.value = currentUser.id;
                     opt.textContent = `${currentUser.username} (${currentUser.role})`;
