@@ -5385,9 +5385,11 @@ let editingEncomendaId = null;
                 if (resp.ok) {
                     const usuarios = await resp.json();
                     console.log('Usuários retornados:', usuarios);
-                    // Por padrão, permita selecionar qualquer usuário como pagante.
+                    // Exibe somente os 2 maiores cargos como pagantes
+                    const allowedRoles = ['grande-mestre','mestre-dos-ventos'];
+                    const filtrados = Array.isArray(usuarios) ? usuarios.filter(u => allowedRoles.includes(u.role)) : [];
                     // Ordena por username para melhor UX.
-                    const sorted = Array.isArray(usuarios) ? usuarios.slice().sort((a,b) => (a.username||'').localeCompare(b.username||'')) : [];
+                    const sorted = filtrados.slice().sort((a,b) => (a.username||'').localeCompare(b.username||'')); 
                     sorted.forEach(u => {
                         const opt = document.createElement('option');
                         opt.value = u.id; // importante: enviar usuarios.id
