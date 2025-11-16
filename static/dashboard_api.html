@@ -2442,6 +2442,10 @@ let editingEncomendaId = null;
                 clickedTab.classList.add('active');
             }
             
+            // Garantir que o conteúdo exista para abas dinâmicas (ex.: organograma)
+            if (tabName === 'organograma') {
+                try { ensureOrganogramaContainer(); } catch(e) { /* ignore */ }
+            }
             // Add active class to corresponding content and force display
             const tabContent = document.getElementById(tabName);
             if (tabContent) {
