@@ -2954,13 +2954,21 @@ app.post('/api/inventario-familia/atualizar-multiplos', authenticateToken, (req,
 
 // Rotas de requisições família
 app.get('/api/requisicoes-familia', (req, res) => {
-    // Seleciona requisições junto com dados do inventário família. Usa a coluna de nome
-    // configurada ou retorna nulo se não houver coluna
+    // Seleciona requisições com info do item e do solicitante
     const nomeCol = inventarioFamiliaNameColumn ? `i.${inventarioFamiliaNameColumn} as item_nome` : 'NULL as item_nome';
-    const query = `SELECT r.*, ${nomeCol}, i.preco as item_preco 
-                   FROM requisicoes_familia r 
-                   LEFT JOIN inventario_familia i ON r.item_id = i.id 
-                   ORDER BY r.data_solicitacao DESC`;
+    const query = `
+        SELECT 
+            r.*,
+            ${nomeCol},
+            i.preco as item_preco,
+            r.usuario as solicitante_nome,
+            COALESCE(u.role, 'membro') as solicitante_cargo,
+            r.data_requisicao as data_criacao
+        FROM requisicoes_familia r
+        LEFT JOIN inventario_familia i ON r.item_id = i.id
+        LEFT JOIN usuarios u ON u.username = r.usuario
+        ORDER BY r.data_requisicao DESC
+    `;
     db.all(query, (err, rows) => {
         if (err) {
             return res.status(500).json({ error: err.message });
