@@ -1762,6 +1762,16 @@
                 <div id="setupLoading" class="loading">Carregando configurações...</div>
                 
                 <div id="setupContainer" style="display: none;">
+                    <!-- Seção de Gerenciamento de Categorias -->
+                    <div style="margin-bottom: 40px;">
+                        <h3 style="color: #ecf0f1; margin-bottom: 20px; font-size: 20px;">📋 Gerenciar Categorias</h3>
+                        <div id="categoriasList" style="display: flex; flex-direction: column; gap: 15px;">
+                            <!-- Categorias serão inseridas aqui via JavaScript -->
+                        </div>
+                    </div>
+                    
+                    <hr style="border: none; border-top: 1px solid rgba(255,255,255,0.1); margin: 30px 0;">
+                    
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-top: 20px;">
                         <!-- Roupa Dia a Dia -->
                         <div style="background: rgba(255,255,255,0.05); border-radius: 10px; padding: 20px; border: 1px solid rgba(255,255,255,0.1);">
@@ -6124,7 +6134,13 @@ let editingEncomendaId = null;
                     alert('Variação criada com sucesso!');
                     closeModal('novaVariacaoModal');
                     novaVariacaoForm.reset();
-                    await loadVariacoesRoupas(categoriaId, tipoRoupa, numero);
+                    
+                    // Se foi criada por categoria, recarregar a lista de categorias
+                    if (tipoRoupa === '') {
+                        await loadVariacoesPorCategoria(categoriaId, parseInt(numero));
+                    } else {
+                        await loadVariacoesRoupas(categoriaId, tipoRoupa, numero);
+                    }
                 } catch (error) {
                     alert('Erro ao criar variação: ' + error.message);
                 }
@@ -8003,8 +8019,210 @@ let editingEncomendaId = null;
                 
                 categoriasRoupas = await response.json();
                 atualizarSelectsCategorias();
+                renderizarCategoriasList();
             } catch (error) {
                 console.error('Erro ao carregar categorias:', error);
+            }
+        }
+
+        // Renderizar lista de categorias com números e variações
+        async function renderizarCategoriasList() {
+            const categoriasList = document.getElementById('categoriasList');
+            if (!categoriasList) return;
+
+            const user = JSON.parse(localStorage.getItem('user') || '{}');
+            const canEdit = ['admin', 'grande-mestre', 'mestre-dos-ventos'].includes(user.role);
+
+            categoriasList.innerHTML = categoriasRoupas.map(categoria => {
+                return `
+                    <div style="background: rgba(255,255,255,0.05); border-radius: 8px; padding: 15px; border: 1px solid rgba(255,255,255,0.1); display: flex; align-items: center; gap: 20px;">
+                        <div style="flex: 1;">
+                            <h4 style="margin: 0 0 8px 0; color: #ecf0f1; font-size: 16px;">${categoria.nome}</h4>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 15px; flex: 2;">
+                            <div style="flex: 1;">
+                                <label style="display: block; font-size: 12px; color: #95a5a6; margin-bottom: 5px;">Número</label>
+                                <input type="number" 
+                                       id="numeroCategoria_${categoria.id}" 
+                                       value="${categoria.numero || ''}" 
+                                       min="0" 
+                                       style="width: 100%; padding: 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.15); background: rgba(0,0,0,0.25); color: #ecf0f1;"
+                                       ${!canEdit ? 'disabled' : ''}
+                                       onchange="salvarNumeroCategoria(${categoria.id}, this.value)">
+                            </div>
+                            <div style="flex: 2;">
+                                <label style="display: block; font-size: 12px; color: #95a5a6; margin-bottom: 5px;">Variações</label>
+                                <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+                                    <div id="variacoesCategoria_${categoria.id}" style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                        <!-- Variações serão carregadas aqui -->
+                                    </div>
+                                    ${canEdit && categoria.numero ? `
+                                        <button type="button" 
+                                                class="btn-secondary" 
+                                                onclick="abrirNovaVariacaoPorCategoria(${categoria.id}, ${categoria.numero})"
+                                                style="font-size: 11px; padding: 6px 10px;">
+                                            + Variação
+                                        </button>
+                                    ` : ''}
+                                </div>
+                            </div>
+                        </div>
+                        ${canEdit ? `
+                            <button type="button" 
+                                    class="btn-secondary" 
+                                    onclick="deletarCategoria(${categoria.id})"
+                                    style="background: #e74c3c; color: white; padding: 8px 12px; font-size: 12px;">
+                                Excluir
+                            </button>
+                        ` : ''}
+                    </div>
+                `;
+            }).join('');
+
+            // Carregar variações para cada categoria
+            categoriasRoupas.forEach(categoria => {
+                if (categoria.numero) {
+                    loadVariacoesPorCategoria(categoria.id, categoria.numero);
+                }
+            });
+        }
+
+        // Carregar variações para uma categoria específica
+        async function loadVariacoesPorCategoria(categoriaId, numero) {
+            try {
+                const token = localStorage.getItem('authToken');
+                const response = await fetch(`${API_BASE}/variacoes-roupas?categoria_id=${categoriaId}&numero=${numero}`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                if (!response.ok) {
+                    return;
+                }
+                
+                const variacoes = await response.json();
+                const container = document.getElementById(`variacoesCategoria_${categoriaId}`);
+                if (!container) return;
+
+                container.innerHTML = variacoes.map(variacao => {
+                    const user = JSON.parse(localStorage.getItem('user') || '{}');
+                    const canEdit = ['admin', 'grande-mestre', 'mestre-dos-ventos'].includes(user.role);
+                    
+                    return `
+                        <span style="background: rgba(52, 152, 219, 0.2); color: #3498db; padding: 4px 10px; border-radius: 12px; font-size: 12px; display: flex; align-items: center; gap: 6px;">
+                            ${variacao.nome}
+                            ${canEdit ? `
+                                <button type="button" 
+                                        onclick="deletarVariacao(${variacao.id}, ${categoriaId}, ${numero})"
+                                        style="background: transparent; border: none; color: #e74c3c; cursor: pointer; padding: 0; margin-left: 4px; font-size: 14px; line-height: 1;">
+                                    ×
+                                </button>
+                            ` : ''}
+                        </span>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('Erro ao carregar variações:', error);
+            }
+        }
+
+        // Salvar número de categoria
+        async function salvarNumeroCategoria(categoriaId, numero) {
+            try {
+                const token = localStorage.getItem('authToken');
+                const response = await fetch(`${API_BASE}/categorias-roupas/${categoriaId}/numero`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ numero: numero ? parseInt(numero) : null })
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Erro ao salvar número');
+                }
+                
+                // Atualizar a categoria na lista
+                const categoria = categoriasRoupas.find(c => c.id === categoriaId);
+                if (categoria) {
+                    categoria.numero = numero ? parseInt(numero) : null;
+                }
+                
+                // Recarregar variações se houver número
+                if (numero) {
+                    await loadVariacoesPorCategoria(categoriaId, parseInt(numero));
+                } else {
+                    const container = document.getElementById(`variacoesCategoria_${categoriaId}`);
+                    if (container) {
+                        container.innerHTML = '';
+                    }
+                }
+            } catch (error) {
+                alert('Erro ao salvar número: ' + error.message);
+            }
+        }
+
+        // Abrir modal de nova variação por categoria
+        function abrirNovaVariacaoPorCategoria(categoriaId, numero) {
+            document.getElementById('variacaoCategoria').value = categoriaId;
+            document.getElementById('variacaoNumero').value = numero;
+            document.getElementById('variacaoTipoRoupa').value = '';
+            openModal('novaVariacaoModal');
+        }
+
+        // Deletar categoria
+        async function deletarCategoria(id) {
+            if (!confirm('Tem certeza que deseja excluir esta categoria? Todas as variações associadas também serão excluídas.')) {
+                return;
+            }
+            
+            try {
+                const token = localStorage.getItem('authToken');
+                const response = await fetch(`${API_BASE}/categorias-roupas/${id}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Erro ao deletar categoria');
+                }
+                
+                alert('Categoria excluída com sucesso!');
+                await loadCategoriasRoupas();
+            } catch (error) {
+                alert('Erro ao excluir categoria: ' + error.message);
+            }
+        }
+
+        // Deletar variação
+        async function deletarVariacao(variacaoId, categoriaId, numero) {
+            if (!confirm('Tem certeza que deseja excluir esta variação?')) {
+                return;
+            }
+            
+            try {
+                const token = localStorage.getItem('authToken');
+                const response = await fetch(`${API_BASE}/variacoes-roupas/${variacaoId}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Erro ao deletar variação');
+                }
+                
+                await loadVariacoesPorCategoria(categoriaId, numero);
+            } catch (error) {
+                alert('Erro ao excluir variação: ' + error.message);
             }
         }
 
@@ -8229,6 +8447,7 @@ let editingEncomendaId = null;
                 const response = await fetch(`${API_BASE}/setup-roupas/${tipo}`, {
                     method: 'PUT',
                     headers: {
+                        'Content-Type': 'application/json',
                         'Authorization': `Bearer ${token}`
                     },
                     body: JSON.stringify({
@@ -8238,11 +8457,18 @@ let editingEncomendaId = null;
                     })
                 });
                 
-                const data = await response.json();
-                
                 if (!response.ok) {
-                    throw new Error(data.error || 'Erro ao salvar configuração');
+                    const errorText = await response.text();
+                    let errorData;
+                    try {
+                        errorData = JSON.parse(errorText);
+                    } catch (e) {
+                        throw new Error(errorText || 'Erro ao salvar configuração');
+                    }
+                    throw new Error(errorData.error || 'Erro ao salvar configuração');
                 }
+                
+                const data = await response.json();
                 
                 alert('Configuração salva com sucesso!');
                 loadSetupRoupas();
