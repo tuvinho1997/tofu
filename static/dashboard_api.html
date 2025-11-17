@@ -1765,7 +1765,10 @@
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-top: 20px;">
                         <!-- Roupa Dia a Dia -->
                         <div style="background: rgba(255,255,255,0.05); border-radius: 10px; padding: 20px; border: 1px solid rgba(255,255,255,0.1);">
-                            <h4 style="margin: 0 0 20px 0; color: #ecf0f1; font-size: 18px;">👔 Roupa Dia a Dia</h4>
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                                <h4 style="margin: 0; color: #ecf0f1; font-size: 18px;">👔 Roupa Dia a Dia</h4>
+                                <button class="btn-primary" onclick="toggleFormulario('dia_a_dia')" id="btnPresetDiaADia">+ Preset Pronto</button>
+                            </div>
                             <div id="roupaDiaADia" style="display: flex; gap: 20px; align-items: flex-start;">
                                 <div style="flex: 0 0 300px;">
                                     <div id="imagemDiaADiaContainer" style="width: 300px; height: 400px; background: #1a1a1a; border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-bottom: 15px; position: relative; overflow: hidden;">
@@ -1776,34 +1779,37 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div style="flex: 1;">
-                                    <form id="formDiaADia" onsubmit="salvarRoupa(event, 'dia_a_dia')">
-                                        <div class="form-group">
-                                            <label>Categoria</label>
-                                            <select id="categoriaDiaADia" required>
-                                                <option value="">Selecione uma categoria...</option>
-                                            </select>
-                                        </div>
-                                        <div class="form-group">
-                                            <label>Número</label>
-                                            <input type="number" id="numeroDiaADia" min="0" placeholder="Apenas admin e altos cargos">
-                                        </div>
-                                        <div class="form-group">
-                                            <label>Variação (opcional)</label>
-                                            <select id="variacaoDiaADia">
-                                                <option value="">Nenhuma variação</option>
-                                            </select>
-                                            <p style="margin-top: 5px; color: #95a5a6; font-size: 11px;">Selecione a categoria e número para ver as variações disponíveis</p>
-                                        </div>
-                                        <button type="submit" class="btn-primary">Finalizar Configuração</button>
-                                    </form>
-                                    
+                                <div style="flex: 1; display: flex; flex-direction: column; gap: 15px;">
                                     <!-- Cards de Categorias Configuradas -->
-                                    <div id="cardsCategoriasDiaADia" style="margin-top: 30px;">
-                                        <h5 style="color: #ecf0f1; margin-bottom: 15px; font-size: 14px;">Categorias Configuradas:</h5>
-                                        <div id="categoriasCardsDiaADia" style="display: flex; flex-direction: column; gap: 10px;">
+                                    <div id="cardsCategoriasDiaADia">
+                                        <h5 style="color: #ecf0f1; margin-bottom: 10px; font-size: 13px;">Categorias Configuradas:</h5>
+                                        <div id="categoriasCardsDiaADia" style="display: flex; flex-direction: column; gap: 8px;">
                                             <!-- Cards serão inseridos aqui via JavaScript -->
                                         </div>
+                                    </div>
+                                    
+                                    <!-- Formulário (oculto por padrão) -->
+                                    <div id="formularioDiaADia" style="display: none;">
+                                        <form id="formDiaADia" onsubmit="salvarRoupa(event, 'dia_a_dia')">
+                                            <div class="form-group">
+                                                <label>Categoria</label>
+                                                <select id="categoriaDiaADia" required>
+                                                    <option value="">Selecione uma categoria...</option>
+                                                </select>
+                                            </div>
+                                            <div class="form-group">
+                                                <label>Número</label>
+                                                <input type="number" id="numeroDiaADia" min="0" placeholder="Apenas admin e altos cargos">
+                                            </div>
+                                            <div class="form-group">
+                                                <label>Número da Variação (opcional)</label>
+                                                <input type="number" id="variacaoDiaADia" min="0" placeholder="Digite o número da variação">
+                                            </div>
+                                            <div style="display: flex; gap: 10px;">
+                                                <button type="submit" class="btn-primary">Finalizar Configuração</button>
+                                                <button type="button" class="btn-secondary" onclick="toggleFormulario('dia_a_dia')">Cancelar</button>
+                                            </div>
+                                        </form>
                                     </div>
                                 </div>
                             </div>
@@ -1811,7 +1817,10 @@
                         
                         <!-- Roupa de Ação -->
                         <div style="background: rgba(255,255,255,0.05); border-radius: 10px; padding: 20px; border: 1px solid rgba(255,255,255,0.1);">
-                            <h4 style="margin: 0 0 20px 0; color: #ecf0f1; font-size: 18px;">🎯 Roupa de Ação</h4>
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                                <h4 style="margin: 0; color: #ecf0f1; font-size: 18px;">🎯 Roupa de Ação</h4>
+                                <button class="btn-primary" onclick="toggleFormulario('acao')" id="btnPresetAcao">+ Preset Pronto</button>
+                            </div>
                             <div id="roupaAcao" style="display: flex; gap: 20px; align-items: flex-start;">
                                 <div style="flex: 0 0 300px;">
                                     <div id="imagemAcaoContainer" style="width: 300px; height: 400px; background: #1a1a1a; border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-bottom: 15px; position: relative; overflow: hidden;">
@@ -1822,34 +1831,37 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div style="flex: 1;">
-                                    <form id="formAcao" onsubmit="salvarRoupa(event, 'acao')">
-                                        <div class="form-group">
-                                            <label>Categoria</label>
-                                            <select id="categoriaAcao" required>
-                                                <option value="">Selecione uma categoria...</option>
-                                            </select>
-                                        </div>
-                                        <div class="form-group">
-                                            <label>Número</label>
-                                            <input type="number" id="numeroAcao" min="0" placeholder="Apenas admin e altos cargos">
-                                        </div>
-                                        <div class="form-group">
-                                            <label>Variação (opcional)</label>
-                                            <select id="variacaoAcao">
-                                                <option value="">Nenhuma variação</option>
-                                            </select>
-                                            <p style="margin-top: 5px; color: #95a5a6; font-size: 11px;">Selecione a categoria e número para ver as variações disponíveis</p>
-                                        </div>
-                                        <button type="submit" class="btn-primary">Finalizar Configuração</button>
-                                    </form>
-                                    
+                                <div style="flex: 1; display: flex; flex-direction: column; gap: 15px;">
                                     <!-- Cards de Categorias Configuradas -->
-                                    <div id="cardsCategoriasAcao" style="margin-top: 30px;">
-                                        <h5 style="color: #ecf0f1; margin-bottom: 15px; font-size: 14px;">Categorias Configuradas:</h5>
-                                        <div id="categoriasCardsAcao" style="display: flex; flex-direction: column; gap: 10px;">
+                                    <div id="cardsCategoriasAcao">
+                                        <h5 style="color: #ecf0f1; margin-bottom: 10px; font-size: 13px;">Categorias Configuradas:</h5>
+                                        <div id="categoriasCardsAcao" style="display: flex; flex-direction: column; gap: 8px;">
                                             <!-- Cards serão inseridos aqui via JavaScript -->
                                         </div>
+                                    </div>
+                                    
+                                    <!-- Formulário (oculto por padrão) -->
+                                    <div id="formularioAcao" style="display: none;">
+                                        <form id="formAcao" onsubmit="salvarRoupa(event, 'acao')">
+                                            <div class="form-group">
+                                                <label>Categoria</label>
+                                                <select id="categoriaAcao" required>
+                                                    <option value="">Selecione uma categoria...</option>
+                                                </select>
+                                            </div>
+                                            <div class="form-group">
+                                                <label>Número</label>
+                                                <input type="number" id="numeroAcao" min="0" placeholder="Apenas admin e altos cargos">
+                                            </div>
+                                            <div class="form-group">
+                                                <label>Número da Variação (opcional)</label>
+                                                <input type="number" id="variacaoAcao" min="0" placeholder="Digite o número da variação">
+                                            </div>
+                                            <div style="display: flex; gap: 10px;">
+                                                <button type="submit" class="btn-primary">Finalizar Configuração</button>
+                                                <button type="button" class="btn-secondary" onclick="toggleFormulario('acao')">Cancelar</button>
+                                            </div>
+                                        </form>
                                     </div>
                                 </div>
                             </div>
@@ -8167,10 +8179,42 @@ let editingEncomendaId = null;
                 // Armazenar ID da configuração sendo editada
                 document.getElementById(`form${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).dataset.editingId = configId;
                 
+                // Mostrar formulário se estiver oculto
+                toggleFormulario(tipo);
+                
                 // Scroll para o formulário
                 document.getElementById(`form${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).scrollIntoView({ behavior: 'smooth', block: 'start' });
             } catch (error) {
                 alert('Erro ao carregar configuração: ' + error.message);
+            }
+        }
+
+        // Toggle formulário de preset
+        function toggleFormulario(tipo) {
+            const formularioId = tipo === 'dia_a_dia' ? 'formularioDiaADia' : 'formularioAcao';
+            const btnId = tipo === 'dia_a_dia' ? 'btnPresetDiaADia' : 'btnPresetAcao';
+            const formulario = document.getElementById(formularioId);
+            const btn = document.getElementById(btnId);
+            const form = document.getElementById(`form${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`);
+            
+            if (formulario.style.display === 'none' || !formulario.style.display) {
+                // Mostrar formulário
+                formulario.style.display = 'block';
+                btn.textContent = '✖️ Cancelar';
+            } else {
+                // Se já está visível, limpar e manter visível para nova edição
+                if (form) {
+                    form.reset();
+                    delete form.dataset.editingId;
+                    // Limpar também o campo de variação se for select
+                    const variacaoField = document.getElementById(`variacao${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`);
+                    if (variacaoField && variacaoField.tagName === 'SELECT') {
+                        variacaoField.innerHTML = '<option value="">Nenhuma variação</option>';
+                    }
+                }
+                // Manter formulário visível, apenas limpar os campos
+                formulario.style.display = 'block';
+                btn.textContent = '✖️ Cancelar';
             }
         }
 
@@ -8429,7 +8473,7 @@ let editingEncomendaId = null;
             
             const categoriaId = document.getElementById(`categoria${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).value;
             const numero = document.getElementById(`numero${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).value;
-            const variacaoId = document.getElementById(`variacao${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).value;
+            const variacaoNumero = document.getElementById(`variacao${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).value;
             
             // Verificar se está editando uma configuração existente
             const form = document.getElementById(`form${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`);
@@ -8450,7 +8494,7 @@ let editingEncomendaId = null;
                         body: JSON.stringify({
                             categoria_id: categoriaId || null,
                             numero: numero ? parseInt(numero) : null,
-                            variacao_id: variacaoId || null
+                            variacao_numero: variacaoNumero ? parseInt(variacaoNumero) : null
                         })
                     });
                     // Limpar editingId após salvar
@@ -8487,9 +8531,14 @@ let editingEncomendaId = null;
                 
                 alert('Configuração salva com sucesso!');
                 
-                // Limpar formulário
+                // Limpar formulário e ocultar
                 form.reset();
-                document.getElementById(`variacao${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).innerHTML = '<option value="">Nenhuma variação</option>';
+                delete form.dataset.editingId;
+                const variacaoField = document.getElementById(`variacao${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`);
+                if (variacaoField && variacaoField.tagName === 'SELECT') {
+                    variacaoField.innerHTML = '<option value="">Nenhuma variação</option>';
+                }
+                toggleFormulario(tipo); // Ocultar formulário após salvar
                 
                 // Renderizar cards após salvar
                 await renderizarCardsCategorias(tipo);
