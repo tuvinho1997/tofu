@@ -744,6 +744,58 @@
         </div>
     </div>
 
+<!-- Modal Configuração Materiais de Munição -->
+<div id="configMateriaisMunicaoModal" class="modal">
+    <div class="modal-content" style="max-width: 800px;">
+        <div class="modal-header">
+            <h3 class="modal-title">Configurar Materiais por Tipo de Munição</h3>
+            <button class="close-btn" onclick="closeModal('configMateriaisMunicaoModal')">&times;</button>
+        </div>
+        <form id="configMateriaisMunicaoForm">
+            <p style="margin-top:0; color:#bdc3c7;">
+                Defina quantos materiais são consumidos para produzir cada lote (50 unidades) de munição.
+            </p>
+            <div class="config-municao-grid" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr)); gap:16px;">
+                <div class="config-card" data-tipo="5mm" style="background:rgba(255,255,255,0.03); padding:12px; border-radius:8px;">
+                    <h4 style="margin-top:0;">5mm</h4>
+                    <label>Alumínio<input type="number" min="0" id="cfg-5mm-aluminio"></label>
+                    <label>Cobre<input type="number" min="0" id="cfg-5mm-cobre"></label>
+                    <label>Emb Plástica<input type="number" min="0" id="cfg-5mm-emb_plastica"></label>
+                    <label>Ferro<input type="number" min="0" id="cfg-5mm-ferro"></label>
+                    <label>Titânio<input type="number" min="0" id="cfg-5mm-titanio"></label>
+                </div>
+                <div class="config-card" data-tipo="9mm" style="background:rgba(255,255,255,0.03); padding:12px; border-radius:8px;">
+                    <h4 style="margin-top:0;">9mm</h4>
+                    <label>Alumínio<input type="number" min="0" id="cfg-9mm-aluminio"></label>
+                    <label>Cobre<input type="number" min="0" id="cfg-9mm-cobre"></label>
+                    <label>Emb Plástica<input type="number" min="0" id="cfg-9mm-emb_plastica"></label>
+                    <label>Ferro<input type="number" min="0" id="cfg-9mm-ferro"></label>
+                    <label>Titânio<input type="number" min="0" id="cfg-9mm-titanio"></label>
+                </div>
+                <div class="config-card" data-tipo="762mm" style="background:rgba(255,255,255,0.03); padding:12px; border-radius:8px;">
+                    <h4 style="margin-top:0;">762mm</h4>
+                    <label>Alumínio<input type="number" min="0" id="cfg-762mm-aluminio"></label>
+                    <label>Cobre<input type="number" min="0" id="cfg-762mm-cobre"></label>
+                    <label>Emb Plástica<input type="number" min="0" id="cfg-762mm-emb_plastica"></label>
+                    <label>Ferro<input type="number" min="0" id="cfg-762mm-ferro"></label>
+                    <label>Titânio<input type="number" min="0" id="cfg-762mm-titanio"></label>
+                </div>
+                <div class="config-card" data-tipo="12cbc" style="background:rgba(255,255,255,0.03); padding:12px; border-radius:8px;">
+                    <h4 style="margin-top:0;">12cbc</h4>
+                    <label>Alumínio<input type="number" min="0" id="cfg-12cbc-aluminio"></label>
+                    <label>Cobre<input type="number" min="0" id="cfg-12cbc-cobre"></label>
+                    <label>Emb Plástica<input type="number" min="0" id="cfg-12cbc-emb_plastica"></label>
+                    <label>Ferro<input type="number" min="0" id="cfg-12cbc-ferro"></label>
+                    <label>Titânio<input type="number" min="0" id="cfg-12cbc-titanio"></label>
+                </div>
+            </div>
+            <div class="form-actions" style="margin-top:20px; text-align:right;">
+                <button type="button" class="btn-secondary" onclick="closeModal('configMateriaisMunicaoModal')">Cancelar</button>
+                <button type="submit" class="btn-primary">Salvar Configurações</button>
+            </div>
+        </form>
+    </div>
+</div>
     <div class="nav-tabs">
         <button class="nav-tab active" onclick="showTab('dashboard')">Dashboard</button>
         <button class="nav-tab" onclick="showTab('membros')">Membros</button>
@@ -1255,6 +1307,7 @@
                     <button id="btnSaidaAvulsa" class="btn-secondary" style="margin-left: 10px;" onclick="openModal('saidaAvulsaModal')">Saída Avulsa</button>
                     <!-- Botão para gerar inventário do estoque (auditagem). Exibido apenas para admin/gerente/líder -->
                     <button id="btnInventario" class="btn-secondary" style="margin-left: 10px;" onclick="openModal('inventarioModal')">Inventário</button>
+                    <button id="btnConfigMateriaisMunicao" class="btn-secondary" style="margin-left: 10px; display:none;" onclick="openConfigMateriaisMunicaoModal()">Configurar Materiais de Munição</button>
                 </div>
                 
                 <!--
@@ -2011,7 +2064,9 @@
         // Ele é carregado do localStorage quando a página é carregada para persistir
         // as escolhas do usuário entre sessões. As chaves são os nomes dos itens e os
         // valores são os caminhos relativos retornados pela API de upload.
+        const MUNICAO_TIPOS = ['5mm','9mm','762mm','12cbc'];
         let customEstoqueImages = {};
+        let materiaisMunicaoConfig = {};
         try {
             const storedCustomImages = localStorage.getItem('customEstoqueImages');
             customEstoqueImages = storedCustomImages ? JSON.parse(storedCustomImages) : {};
@@ -2131,6 +2186,14 @@ let editingEncomendaId = null;
                         inventarioBtn.style.display = 'inline-block';
                     } else {
                         inventarioBtn.style.display = 'none';
+                    }
+                }
+                const configMunicaoBtn = document.getElementById('btnConfigMateriaisMunicao');
+                if (configMunicaoBtn) {
+                    if (['admin','grande-mestre','mestre-dos-ventos'].includes(user.role)) {
+                        configMunicaoBtn.style.display = 'inline-block';
+                    } else {
+                        configMunicaoBtn.style.display = 'none';
                     }
                 }
 
@@ -3728,7 +3791,7 @@ let editingEncomendaId = null;
                     const actionBtn = canEditImage ? `<button class="btn-secondary" style="font-size:11px; padding:3px 6px; margin-left:6px;" onclick="editEstoqueItemImage('${safeName}', 'material')">🖼️</button>` : '';
                     row.innerHTML = `
                         <td style="text-align:center;">
-                            <img src="${imgSrc}" alt="${name}" style="width:32px; height:32px; object-fit:contain; border-radius:4px;">
+                            <img src="${imgSrc}" alt="${name}" style="width:48px; height:48px; object-fit:contain; border-radius:6px;">
                             ${actionBtn}
                         </td>
                         <td>${name}</td>
@@ -3770,7 +3833,7 @@ let editingEncomendaId = null;
                     const actionBtn = canEditImage ? `<button class="btn-secondary" style="font-size:11px; padding:3px 6px; margin-left:6px;" onclick="editEstoqueItemImage('${safeName}', 'municao')">🖼️</button>` : '';
                     row.innerHTML = `
                         <td style="text-align:center;">
-                            <img src="${imgSrc}" alt="${nomeFormatado}" style="width:32px; height:32px; object-fit:contain; border-radius:4px;">
+                            <img src="${imgSrc}" alt="${nomeFormatado}" style="width:48px; height:48px; object-fit:contain; border-radius:6px;">
                             ${actionBtn}
                         </td>
                         <td>${nomeFormatado}</td>
@@ -3841,6 +3904,50 @@ let editingEncomendaId = null;
             };
             // Dispara o seletor de arquivos
             inputFile.click();
+        }
+
+        async function loadMateriaisMunicaoConfig(force = false) {
+            if (!force && Object.keys(materiaisMunicaoConfig).length === MUNICAO_TIPOS.length) {
+                return materiaisMunicaoConfig;
+            }
+            const token = localStorage.getItem('authToken');
+            const resp = await fetch(`${API_BASE}/config/materiais-municao`, {
+                headers: { 'Authorization': token ? 'Bearer ' + token : '' }
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.error || 'Erro ao carregar configuração de materiais de munição');
+            }
+            const data = await resp.json();
+            materiaisMunicaoConfig = {};
+            (data || []).forEach(cfg => {
+                if (cfg && cfg.tipo) {
+                    materiaisMunicaoConfig[cfg.tipo] = cfg;
+                }
+            });
+            return materiaisMunicaoConfig;
+        }
+
+        function populateConfigMateriaisMunicaoForm() {
+            MUNICAO_TIPOS.forEach(tipo => {
+                const cfg = materiaisMunicaoConfig[tipo] || {};
+                ['aluminio','cobre','emb_plastica','ferro','titanio'].forEach(campo => {
+                    const input = document.getElementById(`cfg-${tipo}-${campo}`);
+                    if (input) {
+                        input.value = cfg[campo] != null ? cfg[campo] : '';
+                    }
+                });
+            });
+        }
+
+        async function openConfigMateriaisMunicaoModal() {
+            try {
+                await loadMateriaisMunicaoConfig(true);
+                populateConfigMateriaisMunicaoForm();
+                openModal('configMateriaisMunicaoModal');
+            } catch (err) {
+                alert(err.message || 'Erro ao carregar configuração');
+            }
         }
 
         /**
@@ -5287,6 +5394,42 @@ let editingEncomendaId = null;
                 alert('Erro de conexão: ' + error.message);
             }
         });
+
+        const configMateriaisMunicaoForm = document.getElementById('configMateriaisMunicaoForm');
+        if (configMateriaisMunicaoForm) {
+            configMateriaisMunicaoForm.addEventListener('submit', async function(e) {
+                e.preventDefault();
+                try {
+                    const configuracoes = MUNICAO_TIPOS.map(tipo => ({
+                        tipo,
+                        aluminio: parseInt(document.getElementById(`cfg-${tipo}-aluminio`).value) || 0,
+                        cobre: parseInt(document.getElementById(`cfg-${tipo}-cobre`).value) || 0,
+                        emb_plastica: parseInt(document.getElementById(`cfg-${tipo}-emb_plastica`).value) || 0,
+                        ferro: parseInt(document.getElementById(`cfg-${tipo}-ferro`).value) || 0,
+                        titanio: parseInt(document.getElementById(`cfg-${tipo}-titanio`).value) || 0
+                    }));
+                    const token = localStorage.getItem('authToken');
+                    const resp = await fetch(`${API_BASE}/config/materiais-municao`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': token ? 'Bearer ' + token : ''
+                        },
+                        body: JSON.stringify({ configuracoes })
+                    });
+                    const data = await resp.json();
+                    if (!resp.ok) throw new Error(data.error || 'Erro ao salvar configuração');
+                    materiaisMunicaoConfig = {};
+                    configuracoes.forEach(cfg => {
+                        materiaisMunicaoConfig[cfg.tipo] = cfg;
+                    });
+                    alert(data.message || 'Configuração salva com sucesso');
+                    closeModal('configMateriaisMunicaoModal');
+                } catch (err) {
+                    alert(err.message || 'Erro ao salvar configuração');
+                }
+            });
+        }
 
         // Evento de cadastro de novas famílias (disponível apenas para gerentes/admin)
         const familiaFormEl = document.getElementById('familiaForm');
