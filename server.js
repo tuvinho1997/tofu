@@ -4461,11 +4461,16 @@ app.put('/api/setup-roupas/:id', authenticateToken, upload.single('imagem'), (re
                 updateParams.push(caminhoImagem);
             }
             
+            // Se não houver categoria_id no body (upload apenas de imagem), preservar valores existentes
+            const categoriaFinal = categoria_id !== undefined ? (categoria_id || null) : configExistente.categoria_id;
+            const numeroFinal = numero !== undefined ? (numero ? parseInt(numero) : null) : configExistente.numero;
+            const variacaoFinal = variacao_numero !== undefined ? (variacao_numero ? parseInt(variacao_numero) : null) : configExistente.variacao_numero;
+            
             updateQuery += ' categoria_id = ?, numero = ?, variacao_numero = ?, data_atualizacao = CURRENT_TIMESTAMP, atualizado_por = ? WHERE id = ?';
             updateParams.push(
-                categoria_id || null,
-                numero ? parseInt(numero) : null,
-                variacao_numero ? parseInt(variacao_numero) : null,
+                categoriaFinal,
+                numeroFinal,
+                variacaoFinal,
                 atualizadoPor,
                 id
             );
