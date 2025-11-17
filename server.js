@@ -756,11 +756,30 @@ function initializeDatabase() {
         categoria_id INTEGER,
         numero INTEGER,
         variacao_id INTEGER,
+        variacao_numero INTEGER,
         data_atualizacao DATETIME DEFAULT CURRENT_TIMESTAMP,
         atualizado_por TEXT,
         FOREIGN KEY (categoria_id) REFERENCES categorias_roupas(id),
         FOREIGN KEY (variacao_id) REFERENCES variacoes_roupas(id)
     )`);
+    
+    // Migração: adicionar coluna variacao_numero se não existir
+    db.all('PRAGMA table_info(setup_roupas)', (err, cols) => {
+        if (err) {
+            console.warn('Erro ao verificar estrutura de setup_roupas:', err.message);
+            return;
+        }
+        const colVariacaoNumero = cols.find(col => col.name === 'variacao_numero');
+        if (!colVariacaoNumero) {
+            db.run('ALTER TABLE setup_roupas ADD COLUMN variacao_numero INTEGER', (alterErr) => {
+                if (alterErr) {
+                    console.warn('Não foi possível adicionar a coluna variacao_numero em setup_roupas:', alterErr.message);
+                } else {
+                    console.log('Coluna variacao_numero adicionada à tabela setup_roupas');
+                }
+            });
+        }
+    });
 
     // Criar usuário admin padrão
     const hashedPassword = bcrypt.hashSync('tofu$2025', 10);
@@ -4281,16 +4300,16 @@ app.post('/api/setup-roupas', authenticateToken, upload.single('imagem'), (req, 
     }
 
     // Parse do body
-    let tipo, categoria_id, numero, variacao_id;
+    let tipo, categoria_id, numero, variacao_numero;
     if (req.body && typeof req.body === 'object') {
         tipo = req.body.tipo;
         categoria_id = req.body.categoria_id;
         numero = req.body.numero;
-        variacao_id = req.body.variacao_id;
+        variacao_numero = req.body.variacao_numero;
     }
     
     if (typeof categoria_id === 'string' && categoria_id === '') categoria_id = null;
-    if (typeof variacao_id === 'string' && variacao_id === '') variacao_id = null;
+    if (typeof variacao_numero === 'string' && variacao_numero === '') variacao_numero = null;
     if (typeof numero === 'string' && numero === '') numero = null;
     
     if (!tipo || (tipo !== 'dia_a_dia' && tipo !== 'acao')) {
@@ -4315,8 +4334,8 @@ app.post('/api/setup-roupas', authenticateToken, upload.single('imagem'), (req, 
 
     // Criar nova configuração (permite múltiplas por tipo)
     db.run(
-        'INSERT INTO setup_roupas (tipo, caminho_imagem, categoria_id, numero, variacao_id, atualizado_por) VALUES (?, ?, ?, ?, ?, ?)',
-        [tipo, caminhoImagem, categoria_id, numero ? parseInt(numero) : null, variacao_id || null, atualizadoPor],
+        'INSERT INTO setup_roupas (tipo, caminho_imagem, categoria_id, numero, variacao_numero, atualizado_por) VALUES (?, ?, ?, ?, ?, ?)',
+        [tipo, caminhoImagem, categoria_id, numero ? parseInt(numero) : null, variacao_numero ? parseInt(variacao_numero) : null, atualizadoPor],
         function(insertErr) {
             if (insertErr) {
                 if (req.file) {
@@ -4347,15 +4366,15 @@ app.put('/api/setup-roupas/:id', authenticateToken, upload.single('imagem'), (re
     const { id } = req.params;
     
     // Parse do body
-    let categoria_id, numero, variacao_id;
+    let categoria_id, numero, variacao_numero;
     if (req.body && typeof req.body === 'object') {
         categoria_id = req.body.categoria_id;
         numero = req.body.numero;
-        variacao_id = req.body.variacao_id;
+        variacao_numero = req.body.variacao_numero;
     }
     
     if (typeof categoria_id === 'string' && categoria_id === '') categoria_id = null;
-    if (typeof variacao_id === 'string' && variacao_id === '') variacao_id = null;
+    if (typeof variacao_numero === 'string' && variacao_numero === '') variacao_numero = null;
     if (typeof numero === 'string' && numero === '') numero = null;
     
     const atualizadoPor = req.user.username || 'sistema';
@@ -4394,11 +4413,11 @@ app.put('/api/setup-roupas/:id', authenticateToken, upload.single('imagem'), (re
             updateParams.push(caminhoImagem);
         }
         
-        updateQuery += ' categoria_id = ?, numero = ?, variacao_id = ?, data_atualizacao = CURRENT_TIMESTAMP, atualizado_por = ? WHERE id = ?';
+        updateQuery += ' categoria_id = ?, numero = ?, variacao_numero = ?, data_atualizacao = CURRENT_TIMESTAMP, atualizado_por = ? WHERE id = ?';
         updateParams.push(
             categoria_id || null,
             numero ? parseInt(numero) : null,
-            variacao_id || null,
+            variacao_numero ? parseInt(variacao_numero) : null,
             atualizadoPor,
             id
         );
