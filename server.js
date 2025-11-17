@@ -698,8 +698,27 @@ function initializeDatabase() {
     db.run(`CREATE TABLE IF NOT EXISTS categorias_roupas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nome TEXT UNIQUE NOT NULL,
+        numero INTEGER,
         data_criacao DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
+    
+    // Migração: adicionar coluna numero se não existir
+    db.all('PRAGMA table_info(categorias_roupas)', (err, cols) => {
+        if (err) {
+            console.warn('Erro ao verificar estrutura de categorias_roupas:', err.message);
+            return;
+        }
+        const colNumero = cols.find(col => col.name === 'numero');
+        if (!colNumero) {
+            db.run('ALTER TABLE categorias_roupas ADD COLUMN numero INTEGER', (alterErr) => {
+                if (alterErr) {
+                    console.warn('Não foi possível adicionar a coluna numero em categorias_roupas:', alterErr.message);
+                } else {
+                    console.log('Coluna numero adicionada à tabela categorias_roupas');
+                }
+            });
+        }
+    });
 
     // Criar tabela para variações de roupas (cores) - relacionada ao número da categoria
     db.run(`CREATE TABLE IF NOT EXISTS variacoes_roupas (
@@ -4092,6 +4111,31 @@ app.post('/api/categorias-roupas', authenticateToken, (req, res) => {
     );
 });
 
+// Atualizar número de uma categoria
+app.put('/api/categorias-roupas/:id/numero', authenticateToken, (req, res) => {
+    const allowedRoles = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas admin, Grande Mestre ou Mestre dos Ventos podem atualizar números.' });
+    }
+
+    const { id } = req.params;
+    const { numero } = req.body;
+
+    db.run(
+        'UPDATE categorias_roupas SET numero = ? WHERE id = ?',
+        [numero ? parseInt(numero) : null, id],
+        function(err) {
+            if (err) {
+                return res.status(500).json({ error: err.message });
+            }
+            if (this.changes === 0) {
+                return res.status(404).json({ error: 'Categoria não encontrada' });
+            }
+            res.json({ message: 'Número da categoria atualizado com sucesso' });
+        }
+    );
+});
+
 // Deletar categoria de roupa
 app.delete('/api/categorias-roupas/:id', authenticateToken, (req, res) => {
     const allowedRoles = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
@@ -4217,6 +4261,8 @@ app.get('/api/setup-roupas', authenticateToken, (req, res) => {
 
 // Atualizar configuração de roupa
 app.put('/api/setup-roupas/:tipo', authenticateToken, upload.single('imagem'), (req, res) => {
+    // Garantir que a resposta seja JSON
+    res.setHeader('Content-Type', 'application/json');
     const allowedRoles = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
     if (!req.user || !allowedRoles.includes(req.user.role)) {
         if (req.file) {
@@ -4233,7 +4279,19 @@ app.put('/api/setup-roupas/:tipo', authenticateToken, upload.single('imagem'), (
         return res.status(400).json({ error: 'Tipo inválido. Use "dia_a_dia" ou "acao"' });
     }
 
-    const { categoria_id, numero, variacao_id } = req.body;
+    // Parse do body - pode vir como JSON ou form-data
+    let categoria_id, numero, variacao_id;
+    if (req.body && typeof req.body === 'object') {
+        categoria_id = req.body.categoria_id;
+        numero = req.body.numero;
+        variacao_id = req.body.variacao_id;
+    }
+    
+    // Se vier como string (form-data), tentar parsear
+    if (typeof categoria_id === 'string' && categoria_id === '') categoria_id = null;
+    if (typeof variacao_id === 'string' && variacao_id === '') variacao_id = null;
+    if (typeof numero === 'string' && numero === '') numero = null;
+    
     const atualizadoPor = req.user.username || 'sistema';
 
     // Verificar se já existe configuração para este tipo
