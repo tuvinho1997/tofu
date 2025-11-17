@@ -5432,9 +5432,7 @@ let editingEncomendaId = null;
                     editingEncomendaId = null;
                     // Atualiza lista de encomendas
                     loadEncomendas();
-                    if (isEditing) {
-                        loadEstoque();
-                    }
+                    loadEstoque();
                     this.reset();
                     // Quando a família selecionada era "outro", garantir que o campo de texto seja escondido ao resetar
                     const outroInput = document.getElementById('encomendaFamiliaOutro');
