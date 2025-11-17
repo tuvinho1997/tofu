@@ -2756,9 +2756,9 @@ let editingEncomendaId = null;
             // A aba de Organograma é tratada separadamente (sempre exibida) e as demais
             // como Inventário, Membros, Estoque, Imagens e Relatórios são ocultadas.
             // Para cargos de hierarquia inferior, permitimos as abas de Rotas,
-            // Encomendas e Inventário da Família. A aba Organograma é tratada
-            // separadamente e sempre ficará visível; as demais abas são ocultadas.
-            const allowedTabs = ['rotas', 'encomendas', 'inventarioFamilia'];
+            // Encomendas, Inventário da Família, Área Educativa, Localização Facção e Setup (somente visualização).
+            // A aba Organograma é tratada separadamente e sempre ficará visível; as demais abas são ocultadas.
+            const allowedTabs = ['rotas', 'encomendas', 'inventarioFamilia', 'areaEducativa', 'localizacaoFaccao', 'setup'];
             // Seleciona todos os botões de navegação
             document.querySelectorAll('.nav-tabs .nav-tab').forEach(btn => {
                 const onclick = btn.getAttribute('onclick') || '';
@@ -5755,6 +5755,14 @@ let editingEncomendaId = null;
         
         // Deletar vídeo
         async function deletarVideo(id) {
+            const user = JSON.parse(localStorage.getItem('user') || '{}');
+            const canDelete = ['admin','grande-mestre','mestre-dos-ventos'].includes(user.role);
+            
+            if (!canDelete) {
+                alert('Apenas admin, Grande Mestre ou Mestre dos Ventos podem excluir vídeos');
+                return;
+            }
+            
             if (!confirm('Tem certeza que deseja excluir este vídeo?')) {
                 return;
             }
@@ -6132,6 +6140,14 @@ let editingEncomendaId = null;
         if (adicionarVideoForm) {
             adicionarVideoForm.addEventListener('submit', async function(e) {
                 e.preventDefault();
+                
+                const user = JSON.parse(localStorage.getItem('user') || '{}');
+                const canEdit = ['admin','grande-mestre','mestre-dos-ventos'].includes(user.role);
+                
+                if (!canEdit) {
+                    alert('Apenas admin, Grande Mestre ou Mestre dos Ventos podem adicionar vídeos');
+                    return;
+                }
                 
                 const titulo = document.getElementById('videoTitulo').value.trim();
                 const categoria = document.getElementById('videoCategoria').value.trim();
