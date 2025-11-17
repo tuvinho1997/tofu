@@ -1363,6 +1363,8 @@
                                 <th>RG</th>
                                 <th>Telefone</th>
                                 <th>Cargo</th>
+                                <th id="thLogin" style="display: none;">Login</th>
+                                <th id="thSenha" style="display: none;">Senha</th>
                                 <th>Data Cadastro</th>
                                 <th>Ações</th>
                             </tr>
@@ -3339,9 +3341,16 @@ let editingEncomendaId = null;
             const tbody = document.getElementById('membrosTableBody');
             tbody.innerHTML = '';
 
+            const canManageMembers = currentUser && ['admin','grande-mestre','mestre-dos-ventos'].includes(currentUser.role);
+            
+            // Mostrar/ocultar colunas de Login e Senha baseado nas permissões
+            const thLogin = document.getElementById('thLogin');
+            const thSenha = document.getElementById('thSenha');
+            if (thLogin) thLogin.style.display = canManageMembers ? 'table-cell' : 'none';
+            if (thSenha) thSenha.style.display = canManageMembers ? 'table-cell' : 'none';
+
             membros.forEach(membro => {
                 const row = document.createElement('tr');
-                const canManageMembers = currentUser && ['admin','grande-mestre','mestre-dos-ventos'].includes(currentUser.role);
                 let acoes = '';
                 if (canManageMembers) {
                     acoes += `<button class="btn-secondary" style="background: #3498db; padding: 6px 12px; font-size: 12px; margin-right: 5px;" onclick="openEditMembroModal(${membro.id})">Editar</button>`;
@@ -3350,11 +3359,24 @@ let editingEncomendaId = null;
                     acoes = '<span style="color:#95a5a6;font-style:italic;">Sem permissão</span>';
                 }
 
+                // Colunas de Login e Senha (apenas para admin e altos cargos)
+                const loginCell = canManageMembers ? `<td>${membro.username || '<span style="color:#95a5a6;font-style:italic;">Sem login</span>'}</td>` : '';
+                const senhaCell = canManageMembers ? `
+                    <td>
+                        ${membro.user_id ? 
+                            `<button class="btn-secondary" style="background: #f39c12; padding: 4px 8px; font-size: 11px;" onclick="resetarSenha(${membro.user_id}, '${(membro.username || membro.nome).replace(/'/g, "\\'")}')">Resetar Senha</button>` : 
+                            '<span style="color:#95a5a6;font-style:italic;">Sem usuário</span>'
+                        }
+                    </td>
+                ` : '';
+
                 row.innerHTML = `
                     <td>${membro.nome}</td>
                     <td>${membro.rg}</td>
                     <td>${membro.telefone || '-'}</td>
                     <td>${membro.cargo || 'membro'}</td>
+                    ${loginCell}
+                    ${senhaCell}
                     <td>${new Date(membro.data_criacao || membro.data_cadastro).toLocaleDateString('pt-BR')}</td>
                     <td>${acoes}</td>
                 `;
@@ -3420,6 +3442,34 @@ let editingEncomendaId = null;
                 alert('Erro de conexão: ' + error.message);
             }
         });
+
+        // Função para resetar senha de um usuário
+        async function resetarSenha(userId, username) {
+            if (!confirm(`Deseja resetar a senha do usuário "${username}"?\n\nA nova senha será: "senha123"\n\nO usuário precisará alterar a senha no próximo login.`)) {
+                return;
+            }
+
+            try {
+                const token = localStorage.getItem('authToken');
+                const response = await fetch(`${API_BASE}/usuarios/${userId}/resetar-senha`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({ nova_senha: 'senha123' })
+                });
+                
+                const data = await response.json();
+                if (response.ok) {
+                    alert(`Senha resetada com sucesso!\n\nUsuário: ${username}\nNova senha: senha123`);
+                } else {
+                    alert(data.error || 'Erro ao resetar senha');
+                }
+            } catch (error) {
+                alert('Erro: ' + error.message);
+            }
+        }
 
         async function loadMembrosSelect() {
             const select = document.getElementById('rotaMembro');
