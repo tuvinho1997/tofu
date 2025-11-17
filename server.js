@@ -4319,37 +4319,58 @@ app.post('/api/setup-roupas', authenticateToken, upload.single('imagem'), (req, 
         return res.status(400).json({ error: 'Tipo inválido. Use "dia_a_dia" ou "acao"' });
     }
 
-    if (!categoria_id) {
-        if (req.file) {
-            fs.unlink(req.file.path, () => {});
-        }
-        return res.status(400).json({ error: 'Categoria é obrigatória' });
-    }
-
     const atualizadoPor = req.user.username || 'sistema';
-    let caminhoImagem = null;
-    if (req.file) {
-        caminhoImagem = `/static/images/roupas/${req.file.filename}`;
-    }
-
-    // Criar nova configuração (permite múltiplas por tipo)
-    db.run(
-        'INSERT INTO setup_roupas (tipo, caminho_imagem, categoria_id, numero, variacao_numero, atualizado_por) VALUES (?, ?, ?, ?, ?, ?)',
-        [tipo, caminhoImagem, categoria_id, numero ? parseInt(numero) : null, variacao_numero ? parseInt(variacao_numero) : null, atualizadoPor],
-        function(insertErr) {
-            if (insertErr) {
+    
+    // Se houver categoria_id, verificar se já existe configuração para esta categoria neste tipo
+    if (categoria_id) {
+        db.get('SELECT * FROM setup_roupas WHERE tipo = ? AND categoria_id = ?', [tipo, categoria_id], (err, configExistente) => {
+            if (err) {
                 if (req.file) {
                     fs.unlink(req.file.path, () => {});
                 }
-                return res.status(500).json({ error: insertErr.message });
+                return res.status(500).json({ error: err.message });
             }
-            res.json({
-                message: 'Configuração criada com sucesso',
-                id: this.lastID,
-                caminho_imagem: caminhoImagem
-            });
+            
+            if (configExistente) {
+                if (req.file) {
+                    fs.unlink(req.file.path, () => {});
+                }
+                return res.status(400).json({ error: 'Esta categoria já está configurada para este tipo de roupa. Use a opção Editar para modificar.' });
+            }
+            
+            // Continuar com a criação se não houver duplicata
+            criarConfiguracao();
+        });
+    } else {
+        // Se não houver categoria, permitir criar apenas com imagem
+        criarConfiguracao();
+    }
+    
+    function criarConfiguracao() {
+        let caminhoImagem = null;
+        if (req.file) {
+            caminhoImagem = `/static/images/roupas/${req.file.filename}`;
         }
-    );
+
+        // Criar nova configuração (permite múltiplas por tipo, mas apenas uma por categoria)
+        db.run(
+            'INSERT INTO setup_roupas (tipo, caminho_imagem, categoria_id, numero, variacao_numero, atualizado_por) VALUES (?, ?, ?, ?, ?, ?)',
+            [tipo, caminhoImagem, categoria_id || null, numero ? parseInt(numero) : null, variacao_numero ? parseInt(variacao_numero) : null, atualizadoPor],
+            function(insertErr) {
+                if (insertErr) {
+                    if (req.file) {
+                        fs.unlink(req.file.path, () => {});
+                    }
+                    return res.status(500).json({ error: insertErr.message });
+                }
+                res.json({
+                    message: 'Configuração criada com sucesso',
+                    id: this.lastID,
+                    caminho_imagem: caminhoImagem
+                });
+            }
+        );
+    }
 });
 
 // Atualizar configuração específica por ID
@@ -4395,47 +4416,75 @@ app.put('/api/setup-roupas/:id', authenticateToken, upload.single('imagem'), (re
             return res.status(404).json({ error: 'Configuração não encontrada' });
         }
 
-        let caminhoImagem = null;
-        if (req.file) {
-            caminhoImagem = `/static/images/roupas/${req.file.filename}`;
-            // Remover imagem antiga se houver
-            if (configExistente.caminho_imagem) {
-                const oldPath = path.join(__dirname, configExistente.caminho_imagem);
-                fs.unlink(oldPath, () => {});
-            }
-        }
-
-        let updateQuery = 'UPDATE setup_roupas SET';
-        let updateParams = [];
-        
-        if (caminhoImagem) {
-            updateQuery += ' caminho_imagem = ?,';
-            updateParams.push(caminhoImagem);
-        }
-        
-        updateQuery += ' categoria_id = ?, numero = ?, variacao_numero = ?, data_atualizacao = CURRENT_TIMESTAMP, atualizado_por = ? WHERE id = ?';
-        updateParams.push(
-            categoria_id || null,
-            numero ? parseInt(numero) : null,
-            variacao_numero ? parseInt(variacao_numero) : null,
-            atualizadoPor,
-            id
-        );
-
-        db.run(updateQuery, updateParams, function(updateErr) {
-            if (updateErr) {
-                if (req.file) {
-                    fs.unlink(req.file.path, () => {});
+        // Se está alterando a categoria, verificar se já existe outra configuração com essa categoria
+        if (categoria_id && categoria_id != configExistente.categoria_id) {
+            db.get('SELECT * FROM setup_roupas WHERE tipo = ? AND categoria_id = ? AND id != ?', 
+                   [configExistente.tipo, categoria_id, id], (err, outraConfig) => {
+                if (err) {
+                    if (req.file) {
+                        fs.unlink(req.file.path, () => {});
+                    }
+                    return res.status(500).json({ error: err.message });
                 }
-                return res.status(500).json({ error: updateErr.message });
-            }
-            res.json({
-                message: 'Configuração atualizada com sucesso',
-                caminho_imagem: caminhoImagem || configExistente.caminho_imagem
+                
+                if (outraConfig) {
+                    if (req.file) {
+                        fs.unlink(req.file.path, () => {});
+                    }
+                    return res.status(400).json({ error: 'Esta categoria já está configurada para este tipo de roupa. Escolha outra categoria ou edite a configuração existente.' });
+                }
+                
+                // Continuar com a atualização se não houver conflito
+                atualizarConfiguracao();
             });
+        } else {
+            // Se não está alterando a categoria, pode atualizar diretamente
+            atualizarConfiguracao();
+        }
+        
+        function atualizarConfiguracao() {
+            let caminhoImagem = null;
+            if (req.file) {
+                caminhoImagem = `/static/images/roupas/${req.file.filename}`;
+                // Remover imagem antiga se houver
+                if (configExistente.caminho_imagem) {
+                    const oldPath = path.join(__dirname, configExistente.caminho_imagem);
+                    fs.unlink(oldPath, () => {});
+                }
+            }
+
+            let updateQuery = 'UPDATE setup_roupas SET';
+            let updateParams = [];
+            
+            if (caminhoImagem) {
+                updateQuery += ' caminho_imagem = ?,';
+                updateParams.push(caminhoImagem);
+            }
+            
+            updateQuery += ' categoria_id = ?, numero = ?, variacao_numero = ?, data_atualizacao = CURRENT_TIMESTAMP, atualizado_por = ? WHERE id = ?';
+            updateParams.push(
+                categoria_id || null,
+                numero ? parseInt(numero) : null,
+                variacao_numero ? parseInt(variacao_numero) : null,
+                atualizadoPor,
+                id
+            );
+
+                db.run(updateQuery, updateParams, function(updateErr) {
+                    if (updateErr) {
+                        if (req.file) {
+                            fs.unlink(req.file.path, () => {});
+                        }
+                        return res.status(500).json({ error: updateErr.message });
+                    }
+                    res.json({
+                        message: 'Configuração atualizada com sucesso',
+                        caminho_imagem: caminhoImagem || configExistente.caminho_imagem
+                    });
+                });
+            }
         });
     });
-});
 
 // Deletar configuração específica por ID
 app.delete('/api/setup-roupas/:id', authenticateToken, (req, res) => {
