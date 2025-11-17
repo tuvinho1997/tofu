@@ -1283,10 +1283,10 @@ app.put('/api/encomendas/:id', authenticateToken, (req, res) => {
                     return res.status(500).json({ error: err.message });
                 }
 
-                // Controle de estoque baseado em mudanças de status
-                // 1. Se a encomenda estava entregue e deixa de estar entregue,
-                //    devolvemos todo o estoque anteriormente baixado.
-                if (statusAnterior === 'entregue' && status !== 'entregue') {
+        // Controle de estoque baseado em mudanças de status
+        // 1. Se a encomenda estava entregue e deixa de estar entregue,
+        //    devolvemos todo o estoque anteriormente baixado.
+        if (statusAnterior === 'entregue' && status !== 'entregue') {
                     devolverEstoquePorEncomenda(q5Anterior, q9Anterior, q762Anterior, q12Anterior)
                         .then(() => {
                             sendAndVerify({ message: 'Encomenda atualizada e estoque devolvido com sucesso' });
@@ -1297,56 +1297,20 @@ app.put('/api/encomendas/:id', authenticateToken, (req, res) => {
                         });
                     return;
                 }
-                // 2. Se a encomenda estava pronta (estoque já reservado) e muda para pendente ou cancelada,
-                //    devolvemos as quantidades reservadas. Caso mude para entregue, nada a fazer
-                //    pois o estoque já foi baixado ao marcar como pronto.
-                if (statusAnterior === 'pronto' && status !== 'pronto') {
-                    if (status === 'entregue') {
-                        // A encomenda estava pronta e agora foi entregue: estoque já está reservado.
-                        // Entretanto, se houver alterações de quantidade, ajusta o estoque.
-                        const deltaQ5p = q5Novo - q5Anterior;
-                        const deltaQ9p = q9Novo - q9Anterior;
-                        const deltaQ762p = q762Novo - q762Anterior;
-                        const deltaQ12p = q12Novo - q12Anterior;
-                        if (deltaQ5p !== 0 || deltaQ9p !== 0 || deltaQ762p !== 0 || deltaQ12p !== 0) {
-                            // Ajusta estoque baseado na diferença entre novo e antigo
-                            const baixas = {
-                                q5: Math.max(0, deltaQ5p),
-                                q9: Math.max(0, deltaQ9p),
-                                q762: Math.max(0, deltaQ762p),
-                                q12: Math.max(0, deltaQ12p)
-                            };
-                            const devolucoes = {
-                                q5: Math.abs(Math.min(0, deltaQ5p)),
-                                q9: Math.abs(Math.min(0, deltaQ9p)),
-                                q762: Math.abs(Math.min(0, deltaQ762p)),
-                                q12: Math.abs(Math.min(0, deltaQ12p))
-                            };
-                            baixarEstoquePorEncomenda(baixas.q5, baixas.q9, baixas.q762, baixas.q12)
-                                .then(() => devolverEstoquePorEncomenda(devolucoes.q5, devolucoes.q9, devolucoes.q762, devolucoes.q12))
-                                .then(() => {
-                                    sendAndVerify({ message: 'Encomenda atualizada e estoque ajustado com sucesso' });
-                                })
-                                .catch(errAjuste => {
-                                    console.error('Erro ao ajustar estoque:', errAjuste);
-                                    sendAndVerify({ message: 'Encomenda atualizada, mas erro ao ajustar estoque' });
-                                });
-                        } else {
-                            sendAndVerify({ message: 'Encomenda atualizada com sucesso' });
-                        }
-                    } else {
-                        // Mudou de pronto para outro status (pendente, cancelado): devolve reserva
-                        devolverEstoquePorEncomenda(q5Anterior, q9Anterior, q762Anterior, q12Anterior)
-                            .then(() => {
-                                sendAndVerify({ message: 'Encomenda atualizada e estoque devolvido com sucesso' });
-                            })
-                            .catch(errDevolver => {
-                                console.error('Erro ao devolver estoque:', errDevolver);
-                                sendAndVerify({ message: 'Encomenda atualizada, mas erro ao devolver estoque' });
-                            });
-                    }
-                    return;
-                }
+        // 2. Se a encomenda estava pronta (estoque já reservado) e muda para pendente ou cancelada,
+        //    devolvemos as quantidades reservadas. Caso mude para entregue, o tratamento ocorre
+        //    mais adiante (sem devolução prévia).
+        if (statusAnterior === 'pronto' && status !== 'pronto' && status !== 'entregue') {
+            devolverEstoquePorEncomenda(q5Anterior, q9Anterior, q762Anterior, q12Anterior)
+                .then(() => {
+                    sendAndVerify({ message: 'Encomenda atualizada e estoque devolvido com sucesso' });
+                })
+                .catch(errDevolver => {
+                    console.error('Erro ao devolver estoque:', errDevolver);
+                    sendAndVerify({ message: 'Encomenda atualizada, mas erro ao devolver estoque' });
+                });
+            return;
+        }
                 // 3. Se a encomenda não era entregue e passa a ser entregue (sem ter estado pronta),
                 //    baixamos o estoque. Isso cobre status pendente ou cancelado -> entregue.
                 if (statusAnterior !== 'entregue' && status === 'entregue') {
