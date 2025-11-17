@@ -173,6 +173,22 @@ function initializeDatabase() {
         FOREIGN KEY (user_id) REFERENCES usuarios (id)
     )`);
 
+    // Verifica se a tabela de membros possui a coluna 'user_id'. Se não tiver, adiciona.
+    db.all('PRAGMA table_info(membros)', (err, cols) => {
+        if (!err) {
+            const hasUserId = cols.some(col => col.name === 'user_id');
+            if (!hasUserId) {
+                db.run('ALTER TABLE membros ADD COLUMN user_id INTEGER', (alterErr) => {
+                    if (alterErr) {
+                        console.warn('Não foi possível adicionar a coluna user_id em membros:', alterErr.message);
+                    } else {
+                        console.log('Coluna user_id adicionada à tabela membros');
+                    }
+                });
+            }
+        }
+    });
+
     // Verifica se a tabela de membros possui a coluna 'imagem'. Caso a tabela
     // tenha sido criada anteriormente sem essa coluna, adiciona-a através de
     // ALTER TABLE. Isso garante compatibilidade com bancos existentes.
@@ -946,28 +962,41 @@ function verificarMembroCorrespondente(username, callback) {
         return callback(false);
     }
     
-    // Buscar membro que corresponda ao username (comparação case-insensitive e com trim)
-    db.get(
-        `SELECT id FROM membros 
-         WHERE LOWER(TRIM(nome)) = LOWER(TRIM(?)) 
-         OR nome LIKE ? 
-         OR LOWER(TRIM(nome)) LIKE LOWER(TRIM(?))`,
-        [username, `%${username}%`, `%${username}%`],
-        (err, membro) => {
-            if (err) {
-                console.error('Erro ao verificar membro:', err.message);
+    // Primeiro verificar por user_id (relação direta) - mais confiável
+    db.get(`
+        SELECT 1 FROM membros m
+        INNER JOIN usuarios u ON m.user_id = u.id
+        WHERE u.username = ? COLLATE NOCASE OR LOWER(TRIM(u.username)) = ?
+    `, [username, username.toLowerCase().trim()], (err, membroPorUserId) => {
+        if (err) {
+            console.error('Erro ao verificar membro por user_id:', err.message);
+            // Continuar com verificação por nome em caso de erro
+        } else if (membroPorUserId) {
+            return callback(true);
+        }
+        
+        // Se não encontrou por user_id, verificar por nome (compatibilidade com dados antigos)
+        db.get(`
+            SELECT 1 FROM membros 
+            WHERE LOWER(TRIM(nome)) = LOWER(TRIM(?))
+            OR nome LIKE ?
+        `, [username, `%${username}%`], (err2, membroPorNome) => {
+            if (err2) {
+                console.error('Erro ao verificar membro por nome:', err2.message);
                 return callback(false);
             }
-            callback(!!membro);
-        }
-    );
+            callback(!!membroPorNome);
+        });
+    });
 }
 
 // Rotas de autenticação
 app.post('/api/login', (req, res) => {
     const { username, password } = req.body;
 
-    db.get('SELECT * FROM usuarios WHERE username = ?', [username], (err, user) => {
+    // Buscar usuário com verificação case-insensitive
+    db.get('SELECT * FROM usuarios WHERE username = ? COLLATE NOCASE OR LOWER(TRIM(username)) = ?', 
+           [username, username.toLowerCase().trim()], (err, user) => {
         if (err) {
             return res.status(500).json({ error: err.message });
         }
@@ -1046,7 +1075,9 @@ app.post('/api/login', (req, res) => {
 // POST em /api/auth/login e delega ao mesmo handler de /api/login.
 app.post('/api/auth/login', (req, res) => {
     const { username, password } = req.body;
-    db.get('SELECT * FROM usuarios WHERE username = ?', [username], (err, user) => {
+    // Buscar usuário com verificação case-insensitive
+    db.get('SELECT * FROM usuarios WHERE username = ? COLLATE NOCASE OR LOWER(TRIM(username)) = ?', 
+           [username, username.toLowerCase().trim()], (err, user) => {
         if (err) {
             return res.status(500).json({ error: err.message });
         }
@@ -2227,13 +2258,14 @@ app.post('/api/estoque/fabricar', authenticateToken, (req, res) => {
 // Rotas de membros
 app.get('/api/membros', (req, res) => {
     // Buscar membros com informações de login (username) correspondente
+    // Primeiro tenta usar user_id, depois faz fallback para busca por nome (compatibilidade)
     db.all(`
         SELECT 
             m.*,
             u.username,
             u.id as user_id
         FROM membros m
-        LEFT JOIN usuarios u ON LOWER(TRIM(u.username)) = LOWER(TRIM(m.nome))
+        LEFT JOIN usuarios u ON (m.user_id = u.id OR (m.user_id IS NULL AND LOWER(TRIM(u.username)) = LOWER(TRIM(m.nome))))
         ORDER BY m.nome
     `, [], (err, rows) => {
         if (err) {
@@ -2520,18 +2552,22 @@ app.put('/api/membros/:id', authenticateToken, (req, res) => {
                         if (username && password) {
                             const hashedPassword = bcrypt.hashSync(password, 10);
                             db.run('UPDATE usuarios SET username = ?, password = ? WHERE id = ?', 
-                                [username, hashedPassword, usuario.id], (errUpdate) => {
+                                [username.trim(), hashedPassword, usuario.id], (errUpdate) => {
                                 if (errUpdate) {
                                     return res.status(500).json({ error: 'Erro ao atualizar usuário: ' + errUpdate.message });
                                 }
+                                // Atualizar user_id no membro para garantir a relação
+                                db.run('UPDATE membros SET user_id = ? WHERE id = ?', [usuario.id, id], () => {});
                                 res.json({ message: 'Membro e credenciais atualizados com sucesso' });
                             });
                         } else if (username) {
                             db.run('UPDATE usuarios SET username = ? WHERE id = ?', 
-                                [username, usuario.id], (errUpdate) => {
+                                [username.trim(), usuario.id], (errUpdate) => {
                                 if (errUpdate) {
                                     return res.status(500).json({ error: 'Erro ao atualizar username: ' + errUpdate.message });
                                 }
+                                // Atualizar user_id no membro para garantir a relação
+                                db.run('UPDATE membros SET user_id = ? WHERE id = ?', [usuario.id, id], () => {});
                                 res.json({ message: 'Membro e username atualizados com sucesso' });
                             });
                         } else if (password) {
@@ -2541,6 +2577,8 @@ app.put('/api/membros/:id', authenticateToken, (req, res) => {
                                 if (errUpdate) {
                                     return res.status(500).json({ error: 'Erro ao atualizar senha: ' + errUpdate.message });
                                 }
+                                // Atualizar user_id no membro para garantir a relação
+                                db.run('UPDATE membros SET user_id = ? WHERE id = ?', [usuario.id, id], () => {});
                                 res.json({ message: 'Membro e senha atualizados com sucesso' });
                             });
                         } else {
@@ -2552,10 +2590,13 @@ app.put('/api/membros/:id', authenticateToken, (req, res) => {
                             const hashedPassword = bcrypt.hashSync(password, 10);
                             const defaultRole = cargo || 'acolito';
                             db.run('INSERT INTO usuarios (username, password, role) VALUES (?, ?, ?)', 
-                                [username, hashedPassword, defaultRole], (errInsert) => {
+                                [username.trim(), hashedPassword, defaultRole], function(errInsert) {
                                 if (errInsert) {
                                     return res.status(500).json({ error: 'Erro ao criar usuário: ' + errInsert.message });
                                 }
+                                // Atualizar user_id no membro com o ID do usuário criado
+                                const userId = this.lastID;
+                                db.run('UPDATE membros SET user_id = ? WHERE id = ?', [userId, id], () => {});
                                 res.json({ message: 'Membro atualizado e credenciais criadas com sucesso' });
                             });
                         } else {
