@@ -2473,13 +2473,37 @@ app.put('/api/membros/:id', authenticateToken, (req, res) => {
 
                 // Se username foi fornecido, verificar se já existe (exceto se for o mesmo usuário)
                 if (username) {
-                    db.get('SELECT id FROM usuarios WHERE username = ? COLLATE NOCASE AND id != ?', 
-                        [username, usuario ? usuario.id : -1], (errCheck, existingUser) => {
+                    const usernameTrim = username.trim();
+                    // Verificar se existe usuário com esse username (case-insensitive)
+                    db.get('SELECT id FROM usuarios WHERE (username = ? COLLATE NOCASE OR LOWER(TRIM(username)) = ?) AND id != ?', 
+                        [usernameTrim, usernameTrim.toLowerCase(), usuario ? usuario.id : -1], (errCheck, existingUser) => {
                         if (errCheck) {
                             return res.status(500).json({ error: 'Erro ao verificar username: ' + errCheck.message });
                         }
                         if (existingUser) {
-                            return res.status(400).json({ error: 'Username já está em uso por outro usuário' });
+                            // Verificar se esse usuário tem membro correspondente
+                            db.get(`
+                                SELECT 1 FROM membros m 
+                                WHERE LOWER(TRIM(m.nome)) = LOWER(TRIM(?))
+                                OR m.nome LIKE ?
+                            `, [usernameTrim, `%${usernameTrim}%`], (errMembroCheck, membroCheck) => {
+                                if (errMembroCheck) {
+                                    return res.status(500).json({ error: 'Erro ao verificar membro: ' + errMembroCheck.message });
+                                }
+                                // Se tem membro correspondente, o username está em uso
+                                if (membroCheck) {
+                                    return res.status(400).json({ error: 'Username já está em uso por outro membro ativo' });
+                                }
+                                // Se não tem membro, é usuário órfão - pode remover e reutilizar
+                                db.run('DELETE FROM usuarios WHERE id = ?', [existingUser.id], (delErr) => {
+                                    if (delErr) {
+                                        return res.status(500).json({ error: 'Erro ao remover usuário órfão: ' + delErr.message });
+                                    }
+                                    // Agora pode atualizar
+                                    atualizarUsuario();
+                                });
+                            });
+                            return;
                         }
 
                         // Atualizar username e/ou password
@@ -4341,10 +4365,14 @@ app.put('/api/usuarios/:id/ativar', authenticateToken, (req, res) => {
     const { role, cargo } = req.body;
     const newRole = role || 'membro';
     const newCargo = cargo || 'acolito';
-    db.get('SELECT * FROM cadastro_pendentes WHERE id = ?', [id], (err, pend) => {
+        db.get('SELECT * FROM cadastro_pendentes WHERE id = ?', [id], (err, pend) => {
         if (err) return res.status(500).json({ error: err.message });
         if (!pend) return res.status(404).json({ error: 'Cadastro pendente não encontrado' });
-        db.get('SELECT id FROM usuarios WHERE username = ?', [pend.username], (err2, exists) => {
+        
+        // Verificar se username já existe (case-insensitive e com trim)
+        const usernameTrim = pend.username ? pend.username.trim() : '';
+        db.get('SELECT id FROM usuarios WHERE username = ? COLLATE NOCASE OR LOWER(TRIM(username)) = ?', 
+               [usernameTrim, usernameTrim.toLowerCase()], (err2, exists) => {
             if (err2) return res.status(500).json({ error: err2.message });
             
             // Se o usuário existe, verificar se tem membro correspondente
@@ -4396,8 +4424,10 @@ app.put('/api/usuarios/:id/ativar', authenticateToken, (req, res) => {
                 }
                 
                 function criarUsuarioCompleto() {
+                    // Usar username trimado para criar o usuário
+                    const usernameFinal = usernameTrim || pend.username.trim();
                     // Cria usuário definitivo
-                    db.run('INSERT INTO usuarios (username, password, role) VALUES (?, ?, ?)', [pend.username, pend.password, newRole], function(err3) {
+                    db.run('INSERT INTO usuarios (username, password, role) VALUES (?, ?, ?)', [usernameFinal, pend.password, newRole], function(err3) {
                         if (err3) {
                             // Se erro de username duplicado, retornar mensagem mais clara
                             if (err3.message.includes('UNIQUE constraint failed') && err3.message.includes('username')) {
@@ -4412,13 +4442,15 @@ app.put('/api/usuarios/:id/ativar', authenticateToken, (req, res) => {
                                 // Se erro de RG duplicado, limpar o usuário criado e retornar erro
                                 if (err4.message.includes('UNIQUE constraint failed') && err4.message.includes('rg')) {
                                     // Remover o usuário que foi criado
-                                    db.run('DELETE FROM usuarios WHERE username = ?', [pend.username], () => {});
+                                    const usernameFinal = usernameTrim || pend.username.trim();
+                                    db.run('DELETE FROM usuarios WHERE username = ?', [usernameFinal], () => {});
                                     return res.status(400).json({ 
                                         error: 'RG já cadastrado para outro membro. Não é possível aprovar este cadastro.' 
                                     });
                                 }
                                 // Remover o usuário criado em caso de outro erro
-                                db.run('DELETE FROM usuarios WHERE username = ?', [pend.username], () => {});
+                                const usernameFinal = usernameTrim || pend.username.trim();
+                                db.run('DELETE FROM usuarios WHERE username = ?', [usernameFinal], () => {});
                                 return res.status(500).json({ error: err4.message });
                             }
                             // Remove cadastro pendente
