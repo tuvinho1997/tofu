@@ -2631,6 +2631,63 @@ let editingEncomendaId = null;
                     numeroAcao.disabled = !['admin','grande-mestre','mestre-dos-ventos'].includes(user.role);
                 }
 
+                // Controla campos de variação (apenas admin e altos cargos podem editar)
+                const variacaoDiaADia = document.getElementById('variacaoDiaADia');
+                const variacaoAcao = document.getElementById('variacaoAcao');
+                if (variacaoDiaADia) {
+                    variacaoDiaADia.disabled = !['admin','grande-mestre','mestre-dos-ventos'].includes(user.role);
+                }
+                if (variacaoAcao) {
+                    variacaoAcao.disabled = !['admin','grande-mestre','mestre-dos-ventos'].includes(user.role);
+                }
+
+                // Exibe o botão de nova categoria apenas para admin e altos cargos
+                const btnNovaCategoria = document.getElementById('btnNovaCategoria');
+                if (btnNovaCategoria) {
+                    if (['admin','grande-mestre','mestre-dos-ventos'].includes(user.role)) {
+                        btnNovaCategoria.style.display = 'inline-block';
+                    } else {
+                        btnNovaCategoria.style.display = 'none';
+                    }
+                }
+
+                // Exibe os botões de preset apenas para admin e altos cargos
+                const btnPresetDiaADia = document.getElementById('btnPresetDiaADia');
+                const btnPresetAcao = document.getElementById('btnPresetAcao');
+                if (btnPresetDiaADia) {
+                    if (['admin','grande-mestre','mestre-dos-ventos'].includes(user.role)) {
+                        btnPresetDiaADia.style.display = 'inline-block';
+                    } else {
+                        btnPresetDiaADia.style.display = 'none';
+                    }
+                }
+                if (btnPresetAcao) {
+                    if (['admin','grande-mestre','mestre-dos-ventos'].includes(user.role)) {
+                        btnPresetAcao.style.display = 'inline-block';
+                    } else {
+                        btnPresetAcao.style.display = 'none';
+                    }
+                }
+
+                // Controla botões de trocar imagem (apenas admin e altos cargos podem editar)
+                const canEdit = ['admin','grande-mestre','mestre-dos-ventos'].includes(user.role);
+                const btnTrocarDiaADia = document.querySelector('#imagemDiaADiaContainer .btnTrocarImagem');
+                const btnTrocarAcao = document.querySelector('#imagemAcaoContainer .btnTrocarImagem');
+                if (btnTrocarDiaADia) {
+                    if (canEdit) {
+                        btnTrocarDiaADia.style.display = 'block';
+                    } else {
+                        btnTrocarDiaADia.style.display = 'none';
+                    }
+                }
+                if (btnTrocarAcao) {
+                    if (canEdit) {
+                        btnTrocarAcao.style.display = 'block';
+                    } else {
+                        btnTrocarAcao.style.display = 'none';
+                    }
+                }
+
                 const encomendaStatusSelect = document.getElementById('encomendaStatus');
                 if (encomendaStatusSelect) {
                     if (['admin','grande-mestre','mestre-dos-ventos'].includes(user.role)) {
@@ -8139,6 +8196,14 @@ let editingEncomendaId = null;
 
         // Editar configuração
         async function editarConfiguracao(configId, tipo) {
+            const user = JSON.parse(localStorage.getItem('user') || '{}');
+            const canEdit = ['admin', 'grande-mestre', 'mestre-dos-ventos'].includes(user.role);
+            
+            if (!canEdit) {
+                alert('Apenas admin, Grande Mestre ou Mestre dos Ventos podem editar configurações');
+                return;
+            }
+            
             try {
                 const token = localStorage.getItem('authToken');
                 const response = await fetch(`${API_BASE}/setup-roupas`, {
@@ -8179,6 +8244,14 @@ let editingEncomendaId = null;
 
         // Toggle formulário de preset
         function toggleFormulario(tipo) {
+            const user = JSON.parse(localStorage.getItem('user') || '{}');
+            const canEdit = ['admin', 'grande-mestre', 'mestre-dos-ventos'].includes(user.role);
+            
+            if (!canEdit) {
+                alert('Apenas admin, Grande Mestre ou Mestre dos Ventos podem editar configurações');
+                return;
+            }
+            
             const formularioId = tipo === 'dia_a_dia' ? 'formularioDiaADia' : 'formularioAcao';
             const btnId = tipo === 'dia_a_dia' ? 'btnPresetDiaADia' : 'btnPresetAcao';
             const formulario = document.getElementById(formularioId);
@@ -8208,6 +8281,14 @@ let editingEncomendaId = null;
 
         // Deletar configuração
         async function deletarConfiguracao(configId, tipo) {
+            const user = JSON.parse(localStorage.getItem('user') || '{}');
+            const canEdit = ['admin', 'grande-mestre', 'mestre-dos-ventos'].includes(user.role);
+            
+            if (!canEdit) {
+                alert('Apenas admin, Grande Mestre ou Mestre dos Ventos podem excluir configurações');
+                return;
+            }
+            
             if (!confirm('Tem certeza que deseja excluir esta configuração?')) {
                 return;
             }
@@ -8378,19 +8459,25 @@ let editingEncomendaId = null;
                 document.getElementById('placeholderDiaADia').style.display = 'block';
             }
             
-            // Sempre adicionar/atualizar botão de trocar imagem (sempre visível)
+            // Adicionar/atualizar botão de trocar imagem (apenas para usuários com permissão)
             const containerDiaADia = document.getElementById('imagemDiaADiaContainer');
             if (containerDiaADia) {
+                const user = JSON.parse(localStorage.getItem('user') || '{}');
+                const canEdit = ['admin', 'grande-mestre', 'mestre-dos-ventos'].includes(user.role);
+                
                 let btnTrocarDiaADia = containerDiaADia.querySelector('.btnTrocarImagem');
-                if (!btnTrocarDiaADia) {
+                if (!btnTrocarDiaADia && canEdit) {
                     btnTrocarDiaADia = document.createElement('button');
                     btnTrocarDiaADia.className = 'btn-secondary';
                     btnTrocarDiaADia.classList.add('btnTrocarImagem');
                     btnTrocarDiaADia.style.cssText = 'position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); z-index: 10;';
                     containerDiaADia.appendChild(btnTrocarDiaADia);
                 }
-                btnTrocarDiaADia.textContent = configDiaADiaComImagem && configDiaADiaComImagem.caminho_imagem ? 'Trocar Imagem' : 'Adicionar Imagem';
-                btnTrocarDiaADia.onclick = () => abrirUploadRoupa('dia_a_dia');
+                if (btnTrocarDiaADia) {
+                    btnTrocarDiaADia.textContent = configDiaADiaComImagem && configDiaADiaComImagem.caminho_imagem ? 'Trocar Imagem' : 'Adicionar Imagem';
+                    btnTrocarDiaADia.onclick = () => abrirUploadRoupa('dia_a_dia');
+                    btnTrocarDiaADia.style.display = canEdit ? 'block' : 'none';
+                }
             }
             
             // Renderizar cards de categorias
@@ -8411,19 +8498,25 @@ let editingEncomendaId = null;
                 document.getElementById('placeholderAcao').style.display = 'block';
             }
             
-            // Sempre adicionar/atualizar botão de trocar imagem (sempre visível)
+            // Adicionar/atualizar botão de trocar imagem (apenas para usuários com permissão)
             const containerAcao = document.getElementById('imagemAcaoContainer');
             if (containerAcao) {
+                const user = JSON.parse(localStorage.getItem('user') || '{}');
+                const canEdit = ['admin', 'grande-mestre', 'mestre-dos-ventos'].includes(user.role);
+                
                 let btnTrocarAcao = containerAcao.querySelector('.btnTrocarImagem');
-                if (!btnTrocarAcao) {
+                if (!btnTrocarAcao && canEdit) {
                     btnTrocarAcao = document.createElement('button');
                     btnTrocarAcao.className = 'btn-secondary';
                     btnTrocarAcao.classList.add('btnTrocarImagem');
                     btnTrocarAcao.style.cssText = 'position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); z-index: 10;';
                     containerAcao.appendChild(btnTrocarAcao);
                 }
-                btnTrocarAcao.textContent = configAcaoComImagem && configAcaoComImagem.caminho_imagem ? 'Trocar Imagem' : 'Adicionar Imagem';
-                btnTrocarAcao.onclick = () => abrirUploadRoupa('acao');
+                if (btnTrocarAcao) {
+                    btnTrocarAcao.textContent = configAcaoComImagem && configAcaoComImagem.caminho_imagem ? 'Trocar Imagem' : 'Adicionar Imagem';
+                    btnTrocarAcao.onclick = () => abrirUploadRoupa('acao');
+                    btnTrocarAcao.style.display = canEdit ? 'block' : 'none';
+                }
             }
             
             // Renderizar cards de categorias
