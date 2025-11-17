@@ -3983,6 +3983,66 @@ app.put('/api/usuarios/:id/resetar-senha', authenticateToken, (req, res) => {
     });
 });
 
+// Endpoint para limpar usuários órfãos (usuários que não têm membro correspondente)
+// Útil para liberar usernames de usuários antigos que foram removidos da lista de membros
+app.post('/api/usuarios/limpar-orfaos', authenticateToken, (req, res) => {
+    const allowedRoles = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas administradores e cargos mais altos podem limpar usuários órfãos.' });
+    }
+
+    // Buscar usuários que não têm membro correspondente (exceto o admin 'tofu')
+    db.all(`
+        SELECT u.id, u.username, u.role
+        FROM usuarios u
+        WHERE u.username != 'tofu'
+        AND NOT EXISTS (
+            SELECT 1 FROM membros m 
+            WHERE LOWER(TRIM(m.nome)) = LOWER(TRIM(u.username))
+            OR m.nome LIKE '%' || u.username || '%'
+        )
+    `, [], (err, orfaos) => {
+        if (err) {
+            return res.status(500).json({ error: 'Erro ao buscar usuários órfãos: ' + err.message });
+        }
+
+        if (orfaos.length === 0) {
+            return res.json({ 
+                message: 'Nenhum usuário órfão encontrado',
+                removidos: 0,
+                usuarios: []
+            });
+        }
+
+        // Remover cada usuário órfão
+        let removidos = 0;
+        let erros = [];
+        let processados = 0;
+
+        orfaos.forEach((orfao, index) => {
+            db.run('DELETE FROM usuarios WHERE id = ?', [orfao.id], function(deleteErr) {
+                processados++;
+                if (deleteErr) {
+                    erros.push({ username: orfao.username, erro: deleteErr.message });
+                } else {
+                    removidos++;
+                }
+
+                // Quando todos foram processados, retornar resposta
+                if (processados === orfaos.length) {
+                    res.json({
+                        message: `${removidos} usuário(s) órfão(s) removido(s) com sucesso`,
+                        removidos: removidos,
+                        total_encontrados: orfaos.length,
+                        erros: erros.length > 0 ? erros : undefined,
+                        usuarios_removidos: orfaos.filter((o, i) => !erros.find(e => e.username === o.username)).map(o => o.username)
+                    });
+                }
+            });
+        });
+    });
+});
+
 // Endpoint de debug para verificar usernames (apenas para administradores)
 app.get('/api/debug/username/:username', authenticateToken, (req, res) => {
     const allowedRoles = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
