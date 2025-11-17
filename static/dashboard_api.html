@@ -992,11 +992,13 @@
                 </div>
                 <div id="inventarioFamiliaLoading" class="loading-message">Carregando...</div>
                     <div id="inventarioFamiliaContent" style="display:none;">
-                    <h4 style="color:#ecf0f1; margin-top: 0;">Itens do Inventário</h4>
-                    <div id="inventarioFamiliaGrid" style="margin-bottom: 20px;">
-                        <!-- Grid de categorias e itens será renderizado aqui -->
+                    <div id="inventarioFamiliaItensSection">
+                        <h4 style="color:#ecf0f1; margin-top: 0;">Itens do Inventário</h4>
+                        <div id="inventarioFamiliaGrid" style="margin-bottom: 20px;">
+                            <!-- Grid de categorias e itens será renderizado aqui -->
+                        </div>
+                        <hr style="margin: 30px 0; border-color: #34495e;">
                     </div>
-                    <hr style="margin: 30px 0; border-color: #34495e;">
                     
                     <!-- Seção de Requisições Melhorada -->
                     <div style="background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%); padding: 20px; border-radius: 10px; margin-bottom: 20px;">
@@ -5829,10 +5831,12 @@ let editingEncomendaId = null;
             const actionsDiv = document.getElementById('inventarioFamiliaActions');
             if (!actionsDiv) return;
             actionsDiv.innerHTML = '';
+            const itensSection = document.getElementById('inventarioFamiliaItensSection');
 
             // Define visibilidade do contêiner de ações
             if (['admin','grande-mestre','mestre-dos-ventos'].includes(user.role)) {
                 actionsDiv.style.display = 'flex';
+                if (itensSection) itensSection.style.display = 'block';
                 // Botão para adicionar item (somente administradores ou cargos de alto escalão)
                 const addBtn = document.createElement('button');
                 addBtn.className = 'btn-primary';
@@ -5852,6 +5856,7 @@ let editingEncomendaId = null;
                 actionsDiv.appendChild(invBtn);
             } else {
                 actionsDiv.style.display = 'none';
+                if (itensSection) itensSection.style.display = 'none';
             }
         }
 
