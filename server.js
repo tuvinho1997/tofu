@@ -701,11 +701,12 @@ function initializeDatabase() {
         data_criacao DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
 
-    // Criar tabela para variações de roupas (cores) - deve ser criada antes de setup_roupas
+    // Criar tabela para variações de roupas (cores) - relacionada ao número da categoria
     db.run(`CREATE TABLE IF NOT EXISTS variacoes_roupas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nome TEXT NOT NULL,
         categoria_id INTEGER,
+        numero INTEGER,
         data_criacao DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (categoria_id) REFERENCES categorias_roupas(id)
     )`);
@@ -4096,13 +4097,23 @@ app.delete('/api/categorias-roupas/:id', authenticateToken, (req, res) => {
 
 // Listar variações de roupas
 app.get('/api/variacoes-roupas', authenticateToken, (req, res) => {
-    const { categoria_id } = req.query;
+    const { categoria_id, numero } = req.query;
     let query = 'SELECT * FROM variacoes_roupas';
     let params = [];
+    let conditions = [];
     
     if (categoria_id) {
-        query += ' WHERE categoria_id = ?';
+        conditions.push('categoria_id = ?');
         params.push(categoria_id);
+    }
+    
+    if (numero !== undefined && numero !== null && numero !== '') {
+        conditions.push('numero = ?');
+        params.push(parseInt(numero));
+    }
+    
+    if (conditions.length > 0) {
+        query += ' WHERE ' + conditions.join(' AND ');
     }
     
     query += ' ORDER BY nome';
@@ -4117,17 +4128,20 @@ app.get('/api/variacoes-roupas', authenticateToken, (req, res) => {
 
 // Criar variação de roupa
 app.post('/api/variacoes-roupas', authenticateToken, (req, res) => {
-    const { nome, categoria_id } = req.body;
+    const { nome, categoria_id, numero } = req.body;
     if (!nome || nome.trim() === '') {
         return res.status(400).json({ error: 'Nome da variação é obrigatório' });
     }
     if (!categoria_id) {
         return res.status(400).json({ error: 'ID da categoria é obrigatório' });
     }
+    if (numero === undefined || numero === null || numero === '') {
+        return res.status(400).json({ error: 'Número é obrigatório' });
+    }
 
     db.run(
-        'INSERT INTO variacoes_roupas (nome, categoria_id) VALUES (?, ?)',
-        [nome.trim(), categoria_id],
+        'INSERT INTO variacoes_roupas (nome, categoria_id, numero) VALUES (?, ?, ?)',
+        [nome.trim(), categoria_id, parseInt(numero)],
         function(err) {
             if (err) {
                 return res.status(500).json({ error: err.message });
@@ -4136,7 +4150,8 @@ app.post('/api/variacoes-roupas', authenticateToken, (req, res) => {
                 message: 'Variação criada com sucesso',
                 id: this.lastID,
                 nome: nome.trim(),
-                categoria_id: categoria_id
+                categoria_id: categoria_id,
+                numero: parseInt(numero)
             });
         }
     );
