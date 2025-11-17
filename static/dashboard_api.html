@@ -5248,7 +5248,12 @@ let editingEncomendaId = null;
                         'Content-Type': 'application/json',
                         'Authorization': token ? 'Bearer ' + token : undefined
                     },
-                    body: JSON.stringify({ tipo, item, quantidade, baixarMateriais })
+                    body: JSON.stringify({ 
+                        tipo, 
+                        item, 
+                        quantidade, 
+                        baixar_materiais: baixarMateriais 
+                    })
                 });
                 const ct = response.headers.get('content-type') || '';
                 const raw = ct.includes('application/json') ? await response.json() : await response.text();
