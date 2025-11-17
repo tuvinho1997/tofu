@@ -4300,6 +4300,7 @@ app.put('/api/usuarios/:id/ativar', authenticateToken, (req, res) => {
                     });
                 });
             });
+            }
         });
     });
 });
