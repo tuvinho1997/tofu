@@ -1762,16 +1762,6 @@
                 <div id="setupLoading" class="loading">Carregando configurações...</div>
                 
                 <div id="setupContainer" style="display: none;">
-                    <!-- Seção de Gerenciamento de Categorias -->
-                    <div style="margin-bottom: 40px;">
-                        <h3 style="color: #ecf0f1; margin-bottom: 20px; font-size: 20px;">📋 Gerenciar Categorias</h3>
-                        <div id="categoriasList" style="display: flex; flex-direction: column; gap: 15px;">
-                            <!-- Categorias serão inseridas aqui via JavaScript -->
-                        </div>
-                    </div>
-                    
-                    <hr style="border: none; border-top: 1px solid rgba(255,255,255,0.1); margin: 30px 0;">
-                    
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-top: 20px;">
                         <!-- Roupa Dia a Dia -->
                         <div style="background: rgba(255,255,255,0.05); border-radius: 10px; padding: 20px; border: 1px solid rgba(255,255,255,0.1);">
@@ -1805,8 +1795,16 @@
                                             </select>
                                             <button type="button" class="btn-secondary" onclick="abrirNovaVariacao('dia_a_dia')" style="margin-top: 5px; font-size: 12px;">+ Nova Variação</button>
                                         </div>
-                                        <button type="submit" class="btn-primary">Salvar Configuração</button>
+                                        <button type="submit" class="btn-primary">Finalizar Configuração</button>
                                     </form>
+                                    
+                                    <!-- Cards de Categorias Configuradas -->
+                                    <div id="cardsCategoriasDiaADia" style="margin-top: 30px;">
+                                        <h5 style="color: #ecf0f1; margin-bottom: 15px; font-size: 14px;">Categorias Configuradas:</h5>
+                                        <div id="categoriasCardsDiaADia" style="display: flex; flex-direction: column; gap: 10px;">
+                                            <!-- Cards serão inseridos aqui via JavaScript -->
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -1843,8 +1841,16 @@
                                             </select>
                                             <button type="button" class="btn-secondary" onclick="abrirNovaVariacao('acao')" style="margin-top: 5px; font-size: 12px;">+ Nova Variação</button>
                                         </div>
-                                        <button type="submit" class="btn-primary">Salvar Configuração</button>
+                                        <button type="submit" class="btn-primary">Finalizar Configuração</button>
                                     </form>
+                                    
+                                    <!-- Cards de Categorias Configuradas -->
+                                    <div id="cardsCategoriasAcao" style="margin-top: 30px;">
+                                        <h5 style="color: #ecf0f1; margin-bottom: 15px; font-size: 14px;">Categorias Configuradas:</h5>
+                                        <div id="categoriasCardsAcao" style="display: flex; flex-direction: column; gap: 10px;">
+                                            <!-- Cards serão inseridos aqui via JavaScript -->
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -8019,211 +8025,78 @@ let editingEncomendaId = null;
                 
                 categoriasRoupas = await response.json();
                 atualizarSelectsCategorias();
-                renderizarCategoriasList();
             } catch (error) {
                 console.error('Erro ao carregar categorias:', error);
             }
         }
 
-        // Renderizar lista de categorias com números e variações
-        async function renderizarCategoriasList() {
-            const categoriasList = document.getElementById('categoriasList');
-            if (!categoriasList) return;
+        // Renderizar cards de categorias configuradas para uma roupa
+        async function renderizarCardsCategorias(tipo) {
+            const containerId = tipo === 'dia_a_dia' ? 'categoriasCardsDiaADia' : 'categoriasCardsAcao';
+            const container = document.getElementById(containerId);
+            if (!container) return;
 
-            const user = JSON.parse(localStorage.getItem('user') || '{}');
-            const canEdit = ['admin', 'grande-mestre', 'mestre-dos-ventos'].includes(user.role);
+            // Buscar todas as configurações para este tipo (pode ter múltiplas se mudarmos a estrutura)
+            // Por enquanto, busca apenas a configuração atual
+            const config = setupRoupas[tipo];
+            if (!config || !config.categoria_id) {
+                container.innerHTML = '<p style="color: #95a5a6; font-size: 12px;">Nenhuma categoria configurada ainda</p>';
+                return;
+            }
 
-            categoriasList.innerHTML = categoriasRoupas.map(categoria => {
-                return `
-                    <div style="background: rgba(255,255,255,0.05); border-radius: 8px; padding: 15px; border: 1px solid rgba(255,255,255,0.1); display: flex; align-items: center; gap: 20px;">
+            // Buscar informações da categoria
+            const categoria = categoriasRoupas.find(c => c.id === config.categoria_id);
+            if (!categoria) {
+                container.innerHTML = '<p style="color: #95a5a6; font-size: 12px;">Categoria não encontrada</p>';
+                return;
+            }
+
+            // Buscar variações se houver número
+            let variacoes = [];
+            if (config.numero) {
+                try {
+                    const token = localStorage.getItem('authToken');
+                    const response = await fetch(`${API_BASE}/variacoes-roupas?categoria_id=${config.categoria_id}&numero=${config.numero}`, {
+                        headers: {
+                            'Authorization': `Bearer ${token}`
+                        }
+                    });
+                    if (response.ok) {
+                        variacoes = await response.json();
+                    }
+                } catch (error) {
+                    console.error('Erro ao carregar variações:', error);
+                }
+            }
+
+            container.innerHTML = `
+                <div style="background: rgba(52, 152, 219, 0.1); border: 1px solid rgba(52, 152, 219, 0.3); border-radius: 8px; padding: 15px; margin-bottom: 10px;">
+                    <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px;">
                         <div style="flex: 1;">
-                            <h4 style="margin: 0 0 8px 0; color: #ecf0f1; font-size: 16px;">${categoria.nome}</h4>
+                            <h6 style="margin: 0 0 8px 0; color: #ecf0f1; font-size: 15px; font-weight: 600;">${categoria.nome}</h6>
+                            ${config.numero ? `<p style="margin: 0; color: #95a5a6; font-size: 13px;">Número: <strong style="color: #3498db; font-size: 14px;">${config.numero}</strong></p>` : '<p style="margin: 0; color: #95a5a6; font-size: 12px;">Número não definido</p>'}
                         </div>
-                        <div style="display: flex; align-items: center; gap: 15px; flex: 2;">
-                            <div style="flex: 1;">
-                                <label style="display: block; font-size: 12px; color: #95a5a6; margin-bottom: 5px;">Número</label>
-                                <input type="number" 
-                                       id="numeroCategoria_${categoria.id}" 
-                                       value="${categoria.numero || ''}" 
-                                       min="0" 
-                                       style="width: 100%; padding: 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.15); background: rgba(0,0,0,0.25); color: #ecf0f1;"
-                                       ${!canEdit ? 'disabled' : ''}
-                                       onchange="salvarNumeroCategoria(${categoria.id}, this.value)">
-                            </div>
-                            <div style="flex: 2;">
-                                <label style="display: block; font-size: 12px; color: #95a5a6; margin-bottom: 5px;">Variações</label>
-                                <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
-                                    <div id="variacoesCategoria_${categoria.id}" style="display: flex; gap: 8px; flex-wrap: wrap;">
-                                        <!-- Variações serão carregadas aqui -->
-                                    </div>
-                                    ${canEdit && categoria.numero ? `
-                                        <button type="button" 
-                                                class="btn-secondary" 
-                                                onclick="abrirNovaVariacaoPorCategoria(${categoria.id}, ${categoria.numero})"
-                                                style="font-size: 11px; padding: 6px 10px;">
-                                            + Variação
-                                        </button>
-                                    ` : ''}
-                                </div>
-                            </div>
-                        </div>
-                        ${canEdit ? `
-                            <button type="button" 
-                                    class="btn-secondary" 
-                                    onclick="deletarCategoria(${categoria.id})"
-                                    style="background: #e74c3c; color: white; padding: 8px 12px; font-size: 12px;">
-                                Excluir
-                            </button>
-                        ` : ''}
                     </div>
-                `;
-            }).join('');
-
-            // Carregar variações para cada categoria
-            categoriasRoupas.forEach(categoria => {
-                if (categoria.numero) {
-                    loadVariacoesPorCategoria(categoria.id, categoria.numero);
-                }
-            });
-        }
-
-        // Carregar variações para uma categoria específica
-        async function loadVariacoesPorCategoria(categoriaId, numero) {
-            try {
-                const token = localStorage.getItem('authToken');
-                const response = await fetch(`${API_BASE}/variacoes-roupas?categoria_id=${categoriaId}&numero=${numero}`, {
-                    headers: {
-                        'Authorization': `Bearer ${token}`
-                    }
-                });
-                
-                if (!response.ok) {
-                    return;
-                }
-                
-                const variacoes = await response.json();
-                const container = document.getElementById(`variacoesCategoria_${categoriaId}`);
-                if (!container) return;
-
-                container.innerHTML = variacoes.map(variacao => {
-                    const user = JSON.parse(localStorage.getItem('user') || '{}');
-                    const canEdit = ['admin', 'grande-mestre', 'mestre-dos-ventos'].includes(user.role);
-                    
-                    return `
-                        <span style="background: rgba(52, 152, 219, 0.2); color: #3498db; padding: 4px 10px; border-radius: 12px; font-size: 12px; display: flex; align-items: center; gap: 6px;">
-                            ${variacao.nome}
-                            ${canEdit ? `
-                                <button type="button" 
-                                        onclick="deletarVariacao(${variacao.id}, ${categoriaId}, ${numero})"
-                                        style="background: transparent; border: none; color: #e74c3c; cursor: pointer; padding: 0; margin-left: 4px; font-size: 14px; line-height: 1;">
-                                    ×
-                                </button>
-                            ` : ''}
-                        </span>
-                    `;
-                }).join('');
-            } catch (error) {
-                console.error('Erro ao carregar variações:', error);
-            }
-        }
-
-        // Salvar número de categoria
-        async function salvarNumeroCategoria(categoriaId, numero) {
-            try {
-                const token = localStorage.getItem('authToken');
-                const response = await fetch(`${API_BASE}/categorias-roupas/${categoriaId}/numero`, {
-                    method: 'PUT',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`
-                    },
-                    body: JSON.stringify({ numero: numero ? parseInt(numero) : null })
-                });
-                
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(errorData.error || 'Erro ao salvar número');
-                }
-                
-                // Atualizar a categoria na lista
-                const categoria = categoriasRoupas.find(c => c.id === categoriaId);
-                if (categoria) {
-                    categoria.numero = numero ? parseInt(numero) : null;
-                }
-                
-                // Recarregar variações se houver número
-                if (numero) {
-                    await loadVariacoesPorCategoria(categoriaId, parseInt(numero));
-                } else {
-                    const container = document.getElementById(`variacoesCategoria_${categoriaId}`);
-                    if (container) {
-                        container.innerHTML = '';
-                    }
-                }
-            } catch (error) {
-                alert('Erro ao salvar número: ' + error.message);
-            }
-        }
-
-        // Abrir modal de nova variação por categoria
-        function abrirNovaVariacaoPorCategoria(categoriaId, numero) {
-            document.getElementById('variacaoCategoria').value = categoriaId;
-            document.getElementById('variacaoNumero').value = numero;
-            document.getElementById('variacaoTipoRoupa').value = '';
-            openModal('novaVariacaoModal');
-        }
-
-        // Deletar categoria
-        async function deletarCategoria(id) {
-            if (!confirm('Tem certeza que deseja excluir esta categoria? Todas as variações associadas também serão excluídas.')) {
-                return;
-            }
-            
-            try {
-                const token = localStorage.getItem('authToken');
-                const response = await fetch(`${API_BASE}/categorias-roupas/${id}`, {
-                    method: 'DELETE',
-                    headers: {
-                        'Authorization': `Bearer ${token}`
-                    }
-                });
-                
-                if (!response.ok) {
-                    const data = await response.json();
-                    throw new Error(data.error || 'Erro ao deletar categoria');
-                }
-                
-                alert('Categoria excluída com sucesso!');
-                await loadCategoriasRoupas();
-            } catch (error) {
-                alert('Erro ao excluir categoria: ' + error.message);
-            }
-        }
-
-        // Deletar variação
-        async function deletarVariacao(variacaoId, categoriaId, numero) {
-            if (!confirm('Tem certeza que deseja excluir esta variação?')) {
-                return;
-            }
-            
-            try {
-                const token = localStorage.getItem('authToken');
-                const response = await fetch(`${API_BASE}/variacoes-roupas/${variacaoId}`, {
-                    method: 'DELETE',
-                    headers: {
-                        'Authorization': `Bearer ${token}`
-                    }
-                });
-                
-                if (!response.ok) {
-                    const data = await response.json();
-                    throw new Error(data.error || 'Erro ao deletar variação');
-                }
-                
-                await loadVariacoesPorCategoria(categoriaId, numero);
-            } catch (error) {
-                alert('Erro ao excluir variação: ' + error.message);
-            }
+                    ${variacoes.length > 0 ? `
+                        <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);">
+                            <p style="margin: 0 0 8px 0; color: #95a5a6; font-size: 12px; font-weight: 500;">Variações disponíveis:</p>
+                            <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                                ${variacoes.map(v => `
+                                    <span style="background: ${v.id === config.variacao_id ? 'rgba(46, 204, 113, 0.3)' : 'rgba(52, 152, 219, 0.2)'}; 
+                                                 color: ${v.id === config.variacao_id ? '#2ecc71' : '#3498db'}; 
+                                                 padding: 5px 12px; 
+                                                 border-radius: 12px; 
+                                                 font-size: 12px;
+                                                 border: ${v.id === config.variacao_id ? '1px solid rgba(46, 204, 113, 0.5)' : 'none'};
+                                                 font-weight: ${v.id === config.variacao_id ? '600' : '400'};">
+                                        ${v.nome}${v.id === config.variacao_id ? ' ✓' : ''}
+                                    </span>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : config.numero ? '<p style="margin-top: 12px; color: #95a5a6; font-size: 11px;">Nenhuma variação cadastrada para este número</p>' : ''}
+                </div>
+            `;
         }
 
         // Atualizar selects de categorias
@@ -8354,7 +8227,7 @@ let editingEncomendaId = null;
         }
 
         // Renderizar configurações de roupas
-        function renderizarSetupRoupas() {
+        async function renderizarSetupRoupas() {
             // Roupa Dia a Dia
             const configDiaADia = setupRoupas['dia_a_dia'];
             if (configDiaADia) {
@@ -8375,6 +8248,13 @@ let editingEncomendaId = null;
                 }
                 if (configDiaADia.variacao_id) {
                     document.getElementById('variacaoDiaADia').value = configDiaADia.variacao_id;
+                }
+                // Renderizar cards de categorias
+                await renderizarCardsCategorias('dia_a_dia');
+            } else {
+                const container = document.getElementById('categoriasCardsDiaADia');
+                if (container) {
+                    container.innerHTML = '<p style="color: #95a5a6; font-size: 12px;">Nenhuma categoria configurada ainda</p>';
                 }
             }
 
@@ -8398,6 +8278,13 @@ let editingEncomendaId = null;
                 }
                 if (configAcao.variacao_id) {
                     document.getElementById('variacaoAcao').value = configAcao.variacao_id;
+                }
+                // Renderizar cards de categorias
+                await renderizarCardsCategorias('acao');
+            } else {
+                const container = document.getElementById('categoriasCardsAcao');
+                if (container) {
+                    container.innerHTML = '<p style="color: #95a5a6; font-size: 12px;">Nenhuma categoria configurada ainda</p>';
                 }
             }
         }
@@ -8471,7 +8358,9 @@ let editingEncomendaId = null;
                 const data = await response.json();
                 
                 alert('Configuração salva com sucesso!');
-                loadSetupRoupas();
+                await loadSetupRoupas();
+                // Renderizar cards após salvar
+                await renderizarCardsCategorias(tipo);
             } catch (error) {
                 alert('Erro ao salvar configuração: ' + error.message);
             }
