@@ -2423,6 +2423,16 @@
                         <option value="grande-mestre">Grande Mestre</option>
                     </select>
                 </div>
+                <div class="form-group">
+                    <label>Login (Username)</label>
+                    <input type="text" id="editMembroUsername" placeholder="Deixe em branco para não alterar">
+                    <small style="color: #95a5a6; font-size: 12px;">Deixe em branco para manter o login atual</small>
+                </div>
+                <div class="form-group">
+                    <label>Nova Senha</label>
+                    <input type="password" id="editMembroPassword" placeholder="Deixe em branco para não alterar">
+                    <small style="color: #95a5a6; font-size: 12px;">Deixe em branco para manter a senha atual</small>
+                </div>
                 <button type="submit" class="btn-primary">Salvar Alterações</button>
             </form>
         </div>
@@ -3417,6 +3427,16 @@ let editingEncomendaId = null;
             }
             // Se o cargo não estiver definido, define para Acólito por padrão
             document.getElementById('editMembroCargo').value = membro.cargo || 'acolito';
+            // Preenche username se existir
+            const usernameInput = document.getElementById('editMembroUsername');
+            if (usernameInput) {
+                usernameInput.value = membro.username || '';
+            }
+            // Limpa o campo de senha (não preenchemos por segurança)
+            const passwordInput = document.getElementById('editMembroPassword');
+            if (passwordInput) {
+                passwordInput.value = '';
+            }
             document.getElementById('editMembroModal').style.display = 'block';
         }
 
@@ -3428,11 +3448,22 @@ let editingEncomendaId = null;
             const rg = document.getElementById('editMembroRG').value;
             const telefone = document.getElementById('editMembroTelefone').value;
             const cargo = document.getElementById('editMembroCargo').value;
+            const username = document.getElementById('editMembroUsername').value.trim();
+            const password = document.getElementById('editMembroPassword').value;
             if (!id || !nome || !rg) {
-                alert('Todos os campos são obrigatórios');
+                alert('Nome e RG são obrigatórios');
                 return;
             }
             try {
+                const bodyData = { nome, rg, telefone, cargo };
+                // Adiciona username apenas se foi preenchido
+                if (username) {
+                    bodyData.username = username;
+                }
+                // Adiciona password apenas se foi preenchido
+                if (password) {
+                    bodyData.password = password;
+                }
                 const response = await fetch(`${API_BASE}/membros/${id}`, {
                     method: 'PUT',
                     headers: {
@@ -3440,7 +3471,7 @@ let editingEncomendaId = null;
                         // Recupera o token salvo no login. A chave utilizada é 'authToken'.
                         'Authorization': 'Bearer ' + localStorage.getItem('authToken')
                     },
-                    body: JSON.stringify({ nome, rg, telefone, cargo })
+                    body: JSON.stringify(bodyData)
                 });
                 const data = await response.json();
                 if (response.ok) {
