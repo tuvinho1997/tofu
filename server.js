@@ -2450,19 +2450,113 @@ app.put('/api/membros/:id', authenticateToken, (req, res) => {
         return res.status(403).json({ error: 'Acesso negado. Apenas administradores ou os dois maiores cargos podem alterar membros.' });
     }
     const { id } = req.params;
-    const { nome, rg, telefone, cargo } = req.body;
+    const { nome, rg, telefone, cargo, username, password } = req.body;
 
-    db.run('UPDATE membros SET nome = ?, rg = ?, telefone = ?, cargo = ? WHERE id = ?', [nome, rg, telefone, cargo, id], function (err) {
-        if (err) {
-            if (err.message.includes('UNIQUE constraint failed')) {
-                return res.status(400).json({ error: 'RG já cadastrado para outro membro' });
-            }
-            return res.status(500).json({ error: err.message });
+    // Primeiro, buscar o membro atual para obter o nome antigo (antes de atualizar)
+    db.get('SELECT nome FROM membros WHERE id = ?', [id], (errMembro, membroAtual) => {
+        if (errMembro) {
+            return res.status(500).json({ error: 'Erro ao buscar membro: ' + errMembro.message });
         }
-        if (this.changes === 0) {
+        if (!membroAtual) {
             return res.status(404).json({ error: 'Membro não encontrado' });
         }
-        res.json({ message: 'Membro atualizado com sucesso' });
+
+        const nomeAntigo = membroAtual.nome;
+
+        // Se username ou password foram fornecidos, buscar o usuário antes de atualizar o membro
+        if (username || password) {
+            // Buscar o usuário associado ao membro pelo nome antigo
+            db.get(`
+                SELECT u.id, u.username 
+                FROM usuarios u 
+                WHERE LOWER(TRIM(u.username)) = LOWER(TRIM(?))
+            `, [nomeAntigo], (errUser, usuario) => {
+                if (errUser) {
+                    return res.status(500).json({ error: 'Erro ao buscar usuário: ' + errUser.message });
+                }
+
+                // Se username foi fornecido, verificar se já existe (exceto se for o mesmo usuário)
+                if (username) {
+                    db.get('SELECT id FROM usuarios WHERE username = ? COLLATE NOCASE AND id != ?', 
+                        [username, usuario ? usuario.id : -1], (errCheck, existingUser) => {
+                        if (errCheck) {
+                            return res.status(500).json({ error: 'Erro ao verificar username: ' + errCheck.message });
+                        }
+                        if (existingUser) {
+                            return res.status(400).json({ error: 'Username já está em uso por outro usuário' });
+                        }
+
+                        // Atualizar username e/ou password
+                        atualizarUsuario();
+                    });
+                } else {
+                    // Apenas atualizar password se fornecido
+                    atualizarUsuario();
+                }
+
+                function atualizarUsuario() {
+                    if (usuario) {
+                        // Usuário existe, atualizar
+                        if (username && password) {
+                            const hashedPassword = bcrypt.hashSync(password, 10);
+                            db.run('UPDATE usuarios SET username = ?, password = ? WHERE id = ?', 
+                                [username, hashedPassword, usuario.id], (errUpdate) => {
+                                if (errUpdate) {
+                                    return res.status(500).json({ error: 'Erro ao atualizar usuário: ' + errUpdate.message });
+                                }
+                                res.json({ message: 'Membro e credenciais atualizados com sucesso' });
+                            });
+                        } else if (username) {
+                            db.run('UPDATE usuarios SET username = ? WHERE id = ?', 
+                                [username, usuario.id], (errUpdate) => {
+                                if (errUpdate) {
+                                    return res.status(500).json({ error: 'Erro ao atualizar username: ' + errUpdate.message });
+                                }
+                                res.json({ message: 'Membro e username atualizados com sucesso' });
+                            });
+                        } else if (password) {
+                            const hashedPassword = bcrypt.hashSync(password, 10);
+                            db.run('UPDATE usuarios SET password = ? WHERE id = ?', 
+                                [hashedPassword, usuario.id], (errUpdate) => {
+                                if (errUpdate) {
+                                    return res.status(500).json({ error: 'Erro ao atualizar senha: ' + errUpdate.message });
+                                }
+                                res.json({ message: 'Membro e senha atualizados com sucesso' });
+                            });
+                        } else {
+                            res.json({ message: 'Membro atualizado com sucesso' });
+                        }
+                    } else {
+                        // Usuário não existe, mas foi fornecido username/password - criar novo usuário
+                        if (username && password) {
+                            const hashedPassword = bcrypt.hashSync(password, 10);
+                            const defaultRole = cargo || 'acolito';
+                            db.run('INSERT INTO usuarios (username, password, role) VALUES (?, ?, ?)', 
+                                [username, hashedPassword, defaultRole], (errInsert) => {
+                                if (errInsert) {
+                                    return res.status(500).json({ error: 'Erro ao criar usuário: ' + errInsert.message });
+                                }
+                                res.json({ message: 'Membro atualizado e credenciais criadas com sucesso' });
+                            });
+                        } else {
+                            res.json({ message: 'Membro atualizado com sucesso' });
+                        }
+                    }
+                }
+            });
+        } else {
+            // Nenhuma atualização de credenciais solicitada, apenas atualizar membro
+            db.run('UPDATE membros SET nome = ?, rg = ?, telefone = ?, cargo = ? WHERE id = ?', 
+                [nome, rg, telefone, cargo, id], function (err) {
+                if (err) {
+                    if (err.message.includes('UNIQUE constraint failed')) {
+                        return res.status(400).json({ error: 'RG já cadastrado para outro membro' });
+                    }
+                    return res.status(500).json({ error: err.message });
+                }
+                res.json({ message: 'Membro atualizado com sucesso' });
+            });
+        }
     });
 });
 
@@ -4286,20 +4380,59 @@ app.put('/api/usuarios/:id/ativar', authenticateToken, (req, res) => {
             criarUsuario();
             
             function criarUsuario() {
-                // Cria usuário definitivo
-                db.run('INSERT INTO usuarios (username, password, role) VALUES (?, ?, ?)', [pend.username, pend.password, newRole], function(err3) {
-                if (err3) return res.status(500).json({ error: err3.message });
-                // Cria membro correspondente incluindo a imagem se existir
-                db.run('INSERT INTO membros (nome, rg, telefone, cargo, imagem) VALUES (?, ?, ?, ?, ?)', 
-                       [pend.nome, pend.rg || null, pend.telefone || null, newCargo, pend.imagem || null], function(err4) {
-                    if (err4) return res.status(500).json({ error: err4.message });
-                    // Remove cadastro pendente
-                    db.run('DELETE FROM cadastro_pendentes WHERE id = ?', [id], function(err5) {
-                        if (err5) return res.status(500).json({ error: err5.message });
-                        res.json({ message: 'Usuário aprovado com sucesso' });
+                // Verificar se já existe um membro com o mesmo RG
+                if (pend.rg) {
+                    db.get('SELECT id, nome FROM membros WHERE rg = ?', [pend.rg], (errRG, membroExistente) => {
+                        if (errRG) {
+                            return res.status(500).json({ error: 'Erro ao verificar RG: ' + errRG.message });
+                        }
+                        if (membroExistente) {
+                            return res.status(400).json({ 
+                                error: `RG já cadastrado para o membro "${membroExistente.nome}". Não é possível aprovar este cadastro.` 
+                            });
+                        }
+                        // RG não existe, prosseguir com a criação
+                        criarUsuarioCompleto();
                     });
-                });
-            });
+                } else {
+                    // Sem RG, prosseguir diretamente
+                    criarUsuarioCompleto();
+                }
+                
+                function criarUsuarioCompleto() {
+                    // Cria usuário definitivo
+                    db.run('INSERT INTO usuarios (username, password, role) VALUES (?, ?, ?)', [pend.username, pend.password, newRole], function(err3) {
+                        if (err3) {
+                            // Se erro de username duplicado, retornar mensagem mais clara
+                            if (err3.message.includes('UNIQUE constraint failed') && err3.message.includes('username')) {
+                                return res.status(400).json({ error: 'Username já está em uso. Não é possível aprovar este cadastro.' });
+                            }
+                            return res.status(500).json({ error: err3.message });
+                        }
+                        // Cria membro correspondente incluindo a imagem se existir
+                        db.run('INSERT INTO membros (nome, rg, telefone, cargo, imagem) VALUES (?, ?, ?, ?, ?)', 
+                               [pend.nome, pend.rg || null, pend.telefone || null, newCargo, pend.imagem || null], function(err4) {
+                            if (err4) {
+                                // Se erro de RG duplicado, limpar o usuário criado e retornar erro
+                                if (err4.message.includes('UNIQUE constraint failed') && err4.message.includes('rg')) {
+                                    // Remover o usuário que foi criado
+                                    db.run('DELETE FROM usuarios WHERE username = ?', [pend.username], () => {});
+                                    return res.status(400).json({ 
+                                        error: 'RG já cadastrado para outro membro. Não é possível aprovar este cadastro.' 
+                                    });
+                                }
+                                // Remover o usuário criado em caso de outro erro
+                                db.run('DELETE FROM usuarios WHERE username = ?', [pend.username], () => {});
+                                return res.status(500).json({ error: err4.message });
+                            }
+                            // Remove cadastro pendente
+                            db.run('DELETE FROM cadastro_pendentes WHERE id = ?', [id], function(err5) {
+                                if (err5) return res.status(500).json({ error: err5.message });
+                                res.json({ message: 'Usuário aprovado com sucesso' });
+                            });
+                        });
+                    });
+                }
             }
         });
     });
