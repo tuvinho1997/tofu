@@ -1224,7 +1224,7 @@
             <div class="content-card">
                 <div class="card-header">
                     <h3 class="card-title">Sistema de Membros</h3>
-                    <button class="btn-primary" onclick="openModal('membroModal')">Novo Membro</button>
+                    <button id="btnNovoMembro" class="btn-primary" onclick="openModal('membroModal')">Novo Membro</button>
                 </div>
                 <div id="membrosLoading" class="loading">Carregando membros...</div>
                 <div id="membrosTable" style="display: none;">
@@ -2241,6 +2241,15 @@ let editingEncomendaId = null;
                     }
                 }
 
+                const novoMembroBtn = document.getElementById('btnNovoMembro');
+                if (novoMembroBtn) {
+                    if (['admin','grande-mestre','mestre-dos-ventos'].includes(user.role)) {
+                        novoMembroBtn.style.display = 'inline-block';
+                    } else {
+                        novoMembroBtn.style.display = 'none';
+                    }
+                }
+
                 // Exibe o botão de adicionar itens no estoque apenas para administradores ou líderes
                 const addEstoqueBtn = document.getElementById('btnAddEstoque');
                 if (addEstoqueBtn) {
@@ -2925,14 +2934,14 @@ let editingEncomendaId = null;
 
             membros.forEach(membro => {
                 const row = document.createElement('tr');
-                // Constrói as ações: sempre incluir botão Excluir; se usuário atual tiver permissões de admin/gerente/lider, incluir botão Editar
+                const canManageMembers = currentUser && ['admin','grande-mestre','mestre-dos-ventos'].includes(currentUser.role);
                 let acoes = '';
-                // Editar (permite alterar nome, RG e cargo) - apenas administradores ou cargos de alto escalão
-                if (currentUser && ['admin','grande-mestre','mestre-dos-ventos'].includes(currentUser.role)) {
+                if (canManageMembers) {
                     acoes += `<button class="btn-secondary" style="background: #3498db; padding: 6px 12px; font-size: 12px; margin-right: 5px;" onclick="openEditMembroModal(${membro.id})">Editar</button>`;
+                    acoes += `<button class="btn-primary" style="background: #e74c3c; padding: 6px 12px; font-size: 12px;" onclick="deleteMembro(${membro.id})">Excluir</button>`;
+                } else {
+                    acoes = '<span style="color:#95a5a6;font-style:italic;">Sem permissão</span>';
                 }
-                // Excluir
-                acoes += `<button class="btn-primary" style="background: #e74c3c; padding: 6px 12px; font-size: 12px;" onclick="deleteMembro(${membro.id})">Excluir</button>`;
 
                 row.innerHTML = `
                     <td>${membro.nome}</td>
@@ -3343,7 +3352,7 @@ let editingEncomendaId = null;
             const input = document.getElementById('commissionRateInput');
             if (!container || !input) return;
             // Exibir apenas para administradores ou cargos de alto escalão
-            if (currentUser && ['admin','grande-mestre','mestre-dos-ventos'].includes(currentUser.role)) {
+            if (currentUser && ['admin','grande-mestre'].includes(currentUser.role)) {
                 container.style.display = 'flex';
             } else {
                 container.style.display = 'none';
