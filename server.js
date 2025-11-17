@@ -74,6 +74,41 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
+// Configuração do multer para upload de vídeos
+const videoStorage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const uploadDir = 'static/videos/educativos';
+        if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+        }
+        cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+        const ext = path.extname(file.originalname);
+        const name = path.basename(file.originalname, ext);
+        // Adicionar timestamp para evitar conflitos de nomes
+        const timestamp = Date.now();
+        // Limitar o nome para evitar nomes muito longos
+        const nameLimited = name.length > 50 ? name.substring(0, 50) : name;
+        cb(null, `${nameLimited}_${timestamp}${ext}`);
+    }
+});
+
+const uploadVideo = multer({ 
+    storage: videoStorage,
+    limits: { fileSize: 100 * 1024 * 1024 }, // 100MB limite
+    fileFilter: (req, file, cb) => {
+        const allowedTypes = /mp4|webm|ogg/;
+        const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+        const mimetype = allowedTypes.test(file.mimetype);
+        if (mimetype && extname) {
+            return cb(null, true);
+        } else {
+            cb(new Error('Apenas arquivos de vídeo são permitidos (mp4, webm, ogg)'));
+        }
+    }
+});
+
 // Chave secreta para JWT (em produção, use uma variável de ambiente)
 const JWT_SECRET = process.env.JWT_SECRET || 'sua_chave_secreta_super_segura_aqui_2024';
 
@@ -628,6 +663,16 @@ function initializeDatabase() {
         db.run('INSERT OR IGNORE INTO config_materiais_rota (material, quantidade) VALUES (?, ?)', 
                [mat.material, mat.quantidade]);
     });
+
+    // Criar tabela de vídeos educativos
+    db.run(`CREATE TABLE IF NOT EXISTS videos_educativos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        titulo TEXT NOT NULL,
+        caminho_arquivo TEXT NOT NULL,
+        categoria TEXT,
+        data_criacao DATETIME DEFAULT CURRENT_TIMESTAMP,
+        criado_por TEXT
+    )`);
 
     // Criar usuário admin padrão
     const hashedPassword = bcrypt.hashSync('tofu$2025', 10);
@@ -3765,6 +3810,100 @@ app.delete('/api/inventario-familia/item/:nome', authenticateToken, (req, res) =
         res.json({ 
             message: `Item ${nome} excluído com sucesso`,
             itens_removidos: this.changes
+        });
+    });
+});
+
+// ==================== ÁREA EDUCATIVA - VÍDEOS ====================
+
+// Listar todos os vídeos educativos
+app.get('/api/videos-educativos', authenticateToken, (req, res) => {
+    db.all('SELECT * FROM videos_educativos ORDER BY data_criacao DESC', [], (err, videos) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json(videos);
+    });
+});
+
+// Adicionar novo vídeo educativo
+app.post('/api/videos-educativos', authenticateToken, uploadVideo.single('video'), (req, res) => {
+    const allowedRoles = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+        // Se houver arquivo enviado, removê-lo antes de retornar erro
+        if (req.file) {
+            fs.unlink(req.file.path, () => {});
+        }
+        return res.status(403).json({ error: 'Acesso negado. Apenas admin, Grande Mestre ou Mestre dos Ventos podem adicionar vídeos.' });
+    }
+
+    if (!req.file) {
+        return res.status(400).json({ error: 'Nenhum arquivo de vídeo foi enviado' });
+    }
+
+    const { titulo, categoria } = req.body;
+    if (!titulo || titulo.trim() === '') {
+        // Remover arquivo se título não foi fornecido
+        fs.unlink(req.file.path, () => {});
+        return res.status(400).json({ error: 'Título do vídeo é obrigatório' });
+    }
+
+    const caminhoArquivo = `/static/videos/educativos/${req.file.filename}`;
+    const criadoPor = req.user.username || 'sistema';
+
+    db.run(
+        'INSERT INTO videos_educativos (titulo, caminho_arquivo, categoria, criado_por) VALUES (?, ?, ?, ?)',
+        [titulo.trim(), caminhoArquivo, categoria || null, criadoPor],
+        function(err) {
+            if (err) {
+                // Remover arquivo se houver erro ao salvar no banco
+                fs.unlink(req.file.path, () => {});
+                return res.status(500).json({ error: err.message });
+            }
+            res.json({
+                message: 'Vídeo adicionado com sucesso',
+                id: this.lastID,
+                titulo: titulo.trim(),
+                caminho_arquivo: caminhoArquivo
+            });
+        }
+    );
+});
+
+// Deletar vídeo educativo
+app.delete('/api/videos-educativos/:id', authenticateToken, (req, res) => {
+    const allowedRoles = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas admin, Grande Mestre ou Mestre dos Ventos podem deletar vídeos.' });
+    }
+
+    const { id } = req.params;
+    
+    // Buscar o vídeo para obter o caminho do arquivo
+    db.get('SELECT * FROM videos_educativos WHERE id = ?', [id], (err, video) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        if (!video) {
+            return res.status(404).json({ error: 'Vídeo não encontrado' });
+        }
+
+        // Deletar do banco
+        db.run('DELETE FROM videos_educativos WHERE id = ?', [id], function(deleteErr) {
+            if (deleteErr) {
+                return res.status(500).json({ error: deleteErr.message });
+            }
+
+            // Tentar remover o arquivo físico
+            const filePath = path.join(__dirname, video.caminho_arquivo);
+            fs.unlink(filePath, (unlinkErr) => {
+                // Não falhar se o arquivo não existir
+                if (unlinkErr && unlinkErr.code !== 'ENOENT') {
+                    console.warn('Erro ao remover arquivo de vídeo:', unlinkErr.message);
+                }
+            });
+
+            res.json({ message: 'Vídeo deletado com sucesso' });
         });
     });
 });
