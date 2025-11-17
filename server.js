@@ -2253,9 +2253,13 @@ app.post('/api/membros', authenticateToken, (req, res) => {
     // cargo default para membros sem definição explícita
     const cargoValor = cargo || 'membro';
 
-    // Validar se username e senha foram fornecidos juntos
-    if ((username && !password) || (!username && password)) {
-        return res.status(400).json({ error: 'Por favor, forneça tanto o usuário quanto a senha, ou deixe ambos em branco.' });
+    // Validar se username e senha foram fornecidos (agora obrigatórios)
+    if (!username || !password) {
+        return res.status(400).json({ error: 'Username e senha são obrigatórios para criar um membro. O membro precisa de credenciais para fazer login.' });
+    }
+    
+    if (password.length < 4) {
+        return res.status(400).json({ error: 'A senha deve ter no mínimo 4 caracteres.' });
     }
 
     // Realiza a inserção incluindo a coluna imagem. Caso a coluna não exista,
@@ -2271,15 +2275,14 @@ app.post('/api/membros', authenticateToken, (req, res) => {
 
         const membroId = this.lastID;
 
-        // Se username e senha foram fornecidos, criar usuário automaticamente
-        if (username && password) {
-            // Normalizar username (trim para inserção)
-            const usernameTrim = username.trim();
-            
-            // Verificar se o username já existe em usuarios (verificação exata e case-insensitive)
-            // SQLite por padrão é case-insensitive para TEXT, mas vamos verificar de várias formas
-            // IMPORTANTE: Usar COLLATE NOCASE para garantir comparação case-insensitive
-            db.get('SELECT id, username FROM usuarios WHERE username = ? COLLATE NOCASE OR LOWER(TRIM(username)) = ?', 
+        // Criar usuário automaticamente (username e senha são obrigatórios)
+        // Normalizar username (trim para inserção)
+        const usernameTrim = username.trim();
+        
+        // Verificar se o username já existe em usuarios (verificação exata e case-insensitive)
+        // SQLite por padrão é case-insensitive para TEXT, mas vamos verificar de várias formas
+        // IMPORTANTE: Usar COLLATE NOCASE para garantir comparação case-insensitive
+        db.get('SELECT id, username FROM usuarios WHERE username = ? COLLATE NOCASE OR LOWER(TRIM(username)) = ?', 
                    [usernameTrim, usernameTrim.toLowerCase()], (errUser, existingUser) => {
                 if (errUser) {
                     console.error('Erro ao verificar username em usuarios:', errUser.message);
@@ -2432,15 +2435,7 @@ app.post('/api/membros', authenticateToken, (req, res) => {
                         });
                     });
                 });
-                }
             });
-        } else {
-            // Se não forneceu username/senha, apenas retorna sucesso do membro
-            res.json({
-                message: 'Membro cadastrado com sucesso',
-                id: membroId
-            });
-        }
     });
 });
 
