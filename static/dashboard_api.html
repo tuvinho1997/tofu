@@ -6183,22 +6183,51 @@ let editingEncomendaId = null;
                     const formData = new FormData();
                     formData.append('imagem', roupaArquivo);
                     
-                    const categoriaId = document.getElementById(`categoria${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).value;
-                    const numero = document.getElementById(`numero${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).value;
-                    const variacaoId = document.getElementById(`variacao${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).value;
-                    
-                    if (categoriaId) formData.append('categoria_id', categoriaId);
-                    if (numero) formData.append('numero', numero);
-                    if (variacaoId) formData.append('variacao_id', variacaoId);
-                    
                     const token = localStorage.getItem('authToken');
-                    const response = await fetch(`${API_BASE}/setup-roupas/${tipo}`, {
-                        method: 'PUT',
-                        headers: {
-                            'Authorization': `Bearer ${token}`
-                        },
-                        body: formData
-                    });
+                    
+                    // Buscar configuração existente para este tipo
+                    let configExistente = null;
+                    try {
+                        const configResponse = await fetch(`${API_BASE}/setup-roupas?tipo=${tipo}`, {
+                            headers: {
+                                'Authorization': `Bearer ${token}`
+                            }
+                        });
+                        if (configResponse.ok) {
+                            const configs = await configResponse.json();
+                            // Pegar a primeira configuração encontrada (ou criar nova se não houver)
+                            if (configs && configs.length > 0) {
+                                configExistente = configs[0];
+                            }
+                        }
+                    } catch (err) {
+                        console.error('Erro ao buscar configuração:', err);
+                    }
+                    
+                    let response;
+                    if (configExistente) {
+                        // Atualizar configuração existente
+                        formData.append('categoria_id', configExistente.categoria_id || '');
+                        formData.append('numero', configExistente.numero || '');
+                        formData.append('variacao_numero', configExistente.variacao_numero || '');
+                        response = await fetch(`${API_BASE}/setup-roupas/${configExistente.id}`, {
+                            method: 'PUT',
+                            headers: {
+                                'Authorization': `Bearer ${token}`
+                            },
+                            body: formData
+                        });
+                    } else {
+                        // Criar nova configuração apenas com a imagem (sem categoria)
+                        formData.append('tipo', tipo);
+                        response = await fetch(`${API_BASE}/setup-roupas`, {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${token}`
+                            },
+                            body: formData
+                        });
+                    }
                     
                     const data = await response.json();
                     
@@ -8072,70 +8101,34 @@ let editingEncomendaId = null;
                 const canEdit = ['admin', 'grande-mestre', 'mestre-dos-ventos'].includes(user.role);
 
                 // Renderizar cada configuração
-                const cardsHTML = await Promise.all(configs.map(async (config) => {
+                const cardsHTML = configs.map((config) => {
                     const categoria = categoriasRoupas.find(c => c.id === config.categoria_id);
                     if (!categoria) return '';
 
-                    // Buscar variações se houver número
-                    let variacoes = [];
-                    if (config.numero) {
-                        try {
-                            const variacoesResponse = await fetch(`${API_BASE}/variacoes-roupas?categoria_id=${config.categoria_id}&numero=${config.numero}`, {
-                                headers: {
-                                    'Authorization': `Bearer ${token}`
-                                }
-                            });
-                            if (variacoesResponse.ok) {
-                                variacoes = await variacoesResponse.json();
-                            }
-                        } catch (error) {
-                            console.error('Erro ao carregar variações:', error);
-                        }
-                    }
-
                     return `
-                        <div style="background: rgba(52, 152, 219, 0.1); border: 1px solid rgba(52, 152, 219, 0.3); border-radius: 8px; padding: 15px; margin-bottom: 10px; position: relative;">
+                        <div style="background: rgba(52, 152, 219, 0.1); border: 1px solid rgba(52, 152, 219, 0.3); border-radius: 6px; padding: 10px; position: relative;">
                             ${canEdit ? `
-                                <div style="position: absolute; top: 10px; right: 10px; display: flex; gap: 8px;">
+                                <div style="position: absolute; top: 5px; right: 5px; display: flex; gap: 4px;">
                                     <button type="button" 
                                             onclick="editarConfiguracao(${config.id}, '${tipo}')"
-                                            style="background: rgba(241, 196, 15, 0.2); color: #f1c40f; border: 1px solid rgba(241, 196, 15, 0.4); padding: 4px 10px; border-radius: 6px; font-size: 11px; cursor: pointer;">
-                                        ✏️ Editar
+                                            style="background: rgba(241, 196, 15, 0.2); color: #f1c40f; border: 1px solid rgba(241, 196, 15, 0.4); padding: 3px 8px; border-radius: 4px; font-size: 10px; cursor: pointer;">
+                                        ✏️
                                     </button>
                                     <button type="button" 
                                             onclick="deletarConfiguracao(${config.id}, '${tipo}')"
-                                            style="background: rgba(231, 76, 60, 0.2); color: #e74c3c; border: 1px solid rgba(231, 76, 60, 0.4); padding: 4px 10px; border-radius: 6px; font-size: 11px; cursor: pointer;">
-                                        🗑️ Excluir
+                                            style="background: rgba(231, 76, 60, 0.2); color: #e74c3c; border: 1px solid rgba(231, 76, 60, 0.4); padding: 3px 8px; border-radius: 4px; font-size: 10px; cursor: pointer;">
+                                        🗑️
                                     </button>
                                 </div>
                             ` : ''}
-                            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px; ${canEdit ? 'padding-right: 120px;' : ''}">
-                                <div style="flex: 1;">
-                                    <h6 style="margin: 0 0 8px 0; color: #ecf0f1; font-size: 15px; font-weight: 600;">${categoria.nome}</h6>
-                                    ${config.numero ? `<p style="margin: 0; color: #95a5a6; font-size: 13px;">Número: <strong style="color: #3498db; font-size: 14px;">${config.numero}</strong></p>` : '<p style="margin: 0; color: #95a5a6; font-size: 12px;">Número não definido</p>'}
-                                </div>
+                            <div style="display: flex; flex-direction: column; gap: 4px; ${canEdit ? 'padding-right: 60px;' : ''}">
+                                <h6 style="margin: 0; color: #ecf0f1; font-size: 13px; font-weight: 600;">${categoria.nome}</h6>
+                                ${config.numero ? `<p style="margin: 0; color: #95a5a6; font-size: 11px;">Nº: <strong style="color: #3498db;">${config.numero}</strong></p>` : ''}
+                                ${config.variacao_numero ? `<p style="margin: 0; color: #95a5a6; font-size: 11px;">Var: <strong style="color: #2ecc71;">${config.variacao_numero}</strong></p>` : ''}
                             </div>
-                            ${variacoes.length > 0 ? `
-                                <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);">
-                                    <p style="margin: 0 0 8px 0; color: #95a5a6; font-size: 12px; font-weight: 500;">Variações disponíveis:</p>
-                                    <div style="display: flex; flex-wrap: wrap; gap: 6px;">
-                                        ${variacoes.map(v => `
-                                            <span style="background: ${v.id === config.variacao_id ? 'rgba(46, 204, 113, 0.3)' : 'rgba(52, 152, 219, 0.2)'}; 
-                                                         color: ${v.id === config.variacao_id ? '#2ecc71' : '#3498db'}; 
-                                                         padding: 5px 12px; 
-                                                         border-radius: 12px; 
-                                                         font-size: 12px;
-                                                         border: ${v.id === config.variacao_id ? '1px solid rgba(46, 204, 113, 0.5)' : 'none'};
-                                                         font-weight: ${v.id === config.variacao_id ? '600' : '400'};">
-                                                ${v.nome}${v.id === config.variacao_id ? ' ✓' : ''}
-                                            </span>
-                                        `).join('')}
-                                    </div>
-                                </div>
-                            ` : config.numero ? '<p style="margin-top: 12px; color: #95a5a6; font-size: 11px;">Nenhuma variação cadastrada para este número</p>' : ''}
                         </div>
                     `;
-                }));
+                });
 
                 container.innerHTML = cardsHTML.join('');
             } catch (error) {
@@ -8169,12 +8162,7 @@ let editingEncomendaId = null;
                 // Preencher formulário com dados da configuração
                 document.getElementById(`categoria${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).value = config.categoria_id;
                 document.getElementById(`numero${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).value = config.numero || '';
-                
-                // Carregar variações
-                if (config.categoria_id && config.numero) {
-                    await loadVariacoesRoupas(config.categoria_id, tipo, config.numero);
-                    document.getElementById(`variacao${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).value = config.variacao_id || '';
-                }
+                document.getElementById(`variacao${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).value = config.variacao_numero || '';
                 
                 // Armazenar ID da configuração sendo editada
                 document.getElementById(`form${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).dataset.editingId = configId;
@@ -8511,7 +8499,7 @@ let editingEncomendaId = null;
                             tipo: tipo,
                             categoria_id: categoriaId || null,
                             numero: numero ? parseInt(numero) : null,
-                            variacao_id: variacaoId || null
+                            variacao_numero: variacaoNumero ? parseInt(variacaoNumero) : null
                         })
                     });
                 }
