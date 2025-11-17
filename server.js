@@ -2435,7 +2435,8 @@ app.post('/api/membros', authenticateToken, (req, res) => {
                         });
                     });
                 });
-            });
+            }
+        });
     });
 });
 
