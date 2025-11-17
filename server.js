@@ -24,6 +24,9 @@ const fs = require('fs');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Configurar trust proxy para capturar IP corretamente (importante para Hostinger)
+app.set('trust proxy', true);
+
 // Middleware
 app.use(express.json({ limit: '10mb' }));
 
@@ -156,6 +159,18 @@ function initializeDatabase() {
         cargo TEXT DEFAULT 'membro',
         imagem TEXT,
         data_cadastro DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+
+    // Criar tabela de log de acessos para monitoramento
+    db.run(`CREATE TABLE IF NOT EXISTS log_acessos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL,
+        user_id INTEGER,
+        role TEXT,
+        ip_address TEXT,
+        user_agent TEXT,
+        data_acesso DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES usuarios (id)
     )`);
 
     // Verifica se a tabela de membros possui a coluna 'imagem'. Caso a tabela
@@ -925,6 +940,29 @@ function generateRotasParaProximaSemana() {
 // COMENTADO: Estava criando rotas automaticamente na inicialização
 // setTimeout(generateRotasParaProximaSemana, 1000);
 
+// Função para verificar se um usuário tem correspondência na tabela membros
+function verificarMembroCorrespondente(username, callback) {
+    if (!username) {
+        return callback(false);
+    }
+    
+    // Buscar membro que corresponda ao username (comparação case-insensitive e com trim)
+    db.get(
+        `SELECT id FROM membros 
+         WHERE LOWER(TRIM(nome)) = LOWER(TRIM(?)) 
+         OR nome LIKE ? 
+         OR LOWER(TRIM(nome)) LIKE LOWER(TRIM(?))`,
+        [username, `%${username}%`, `%${username}%`],
+        (err, membro) => {
+            if (err) {
+                console.error('Erro ao verificar membro:', err.message);
+                return callback(false);
+            }
+            callback(!!membro);
+        }
+    );
+}
+
 // Rotas de autenticação
 app.post('/api/login', (req, res) => {
     const { username, password } = req.body;
@@ -938,20 +976,58 @@ app.post('/api/login', (req, res) => {
             return res.status(401).json({ error: 'Credenciais inválidas' });
         }
 
-        const token = jwt.sign(
-            { id: user.id, username: user.username, role: user.role },
-            JWT_SECRET,
-            { expiresIn: '24h' }
-        );
+        // Verificar se o usuário tem correspondência na tabela membros
+        // Admin e altos cargos sempre podem acessar
+        if (['admin', 'grande-mestre', 'mestre-dos-ventos'].includes(user.role)) {
+            // Permitir acesso para admin e altos cargos
+        } else {
+            // Para outros usuários, verificar se existe membro correspondente
+            verificarMembroCorrespondente(user.username, (temMembro) => {
+                if (!temMembro) {
+                    return res.status(403).json({ 
+                        error: 'Acesso negado. Você precisa estar cadastrado na lista de membros para acessar o sistema.' 
+                    });
+                }
+                
+                // Usuário tem membro correspondente, prosseguir com login
+                continuarLogin();
+            });
+            return; // Retornar aqui para não continuar o código abaixo
+        }
+        
+        // Continuar com login para admin/altos cargos ou após verificação de membro
+        continuarLogin();
+        
+        function continuarLogin() {
 
-        res.json({
-            token,
-            user: {
-                id: user.id,
-                username: user.username,
-                role: user.role
-            }
-        });
+            const token = jwt.sign(
+                { id: user.id, username: user.username, role: user.role },
+                JWT_SECRET,
+                { expiresIn: '24h' }
+            );
+
+            // Registrar acesso no log
+            const ipAddress = req.ip || req.connection.remoteAddress || 'unknown';
+            const userAgent = req.headers['user-agent'] || 'unknown';
+            db.run(
+                'INSERT INTO log_acessos (username, user_id, role, ip_address, user_agent) VALUES (?, ?, ?, ?, ?)',
+                [user.username, user.id, user.role, ipAddress, userAgent],
+                (logErr) => {
+                    if (logErr) {
+                        console.error('Erro ao registrar log de acesso:', logErr.message);
+                    }
+                }
+            );
+
+            res.json({
+                token,
+                user: {
+                    id: user.id,
+                    username: user.username,
+                    role: user.role
+                }
+            });
+        }
     });
 });
 
@@ -976,16 +1052,52 @@ app.post('/api/auth/login', (req, res) => {
             });
             return;
         }
-        // Usuário encontrado, prossegue com geração de token
-        const token = jwt.sign(
-            { id: user.id, username: user.username, role: user.role },
-            JWT_SECRET,
-            { expiresIn: '24h' }
-        );
-        res.json({
-            token,
-            user: { id: user.id, username: user.username, role: user.role }
-        });
+        
+        // Verificar se o usuário tem correspondência na tabela membros
+        // Admin e altos cargos sempre podem acessar
+        if (['admin', 'grande-mestre', 'mestre-dos-ventos'].includes(user.role)) {
+            // Permitir acesso para admin e altos cargos
+            continuarLogin();
+        } else {
+            // Para outros usuários, verificar se existe membro correspondente
+            verificarMembroCorrespondente(user.username, (temMembro) => {
+                if (!temMembro) {
+                    return res.status(403).json({ 
+                        error: 'Acesso negado. Você precisa estar cadastrado na lista de membros para acessar o sistema.' 
+                    });
+                }
+                
+                // Usuário tem membro correspondente, prosseguir com login
+                continuarLogin();
+            });
+            return; // Retornar aqui para não continuar o código abaixo
+        }
+        
+        function continuarLogin() {
+            const token = jwt.sign(
+                { id: user.id, username: user.username, role: user.role },
+                JWT_SECRET,
+                { expiresIn: '24h' }
+            );
+
+            // Registrar acesso no log
+            const ipAddress = req.ip || req.connection.remoteAddress || 'unknown';
+            const userAgent = req.headers['user-agent'] || 'unknown';
+            db.run(
+                'INSERT INTO log_acessos (username, user_id, role, ip_address, user_agent) VALUES (?, ?, ?, ?, ?)',
+                [user.username, user.id, user.role, ipAddress, userAgent],
+                (logErr) => {
+                    if (logErr) {
+                        console.error('Erro ao registrar log de acesso:', logErr.message);
+                    }
+                }
+            );
+
+            res.json({
+                token,
+                user: { id: user.id, username: user.username, role: user.role }
+            });
+        }
     });
 });
 
@@ -3678,6 +3790,74 @@ app.get('/api/usuarios', authenticateToken, (req, res) => {
     }
 
     db.all('SELECT id, username, role FROM usuarios ORDER BY username', (err, rows) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json(rows);
+    });
+});
+
+// Endpoint para listar usuários que acessaram mas não estão na tabela membros
+app.get('/api/usuarios/sem-membro', authenticateToken, (req, res) => {
+    const allowedRoles = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas administradores e cargos mais altos podem acessar esta informação.' });
+    }
+
+    // Buscar usuários que fizeram login mas não têm correspondência na tabela membros
+    db.all(`
+        SELECT DISTINCT 
+            u.id,
+            u.username,
+            u.role,
+            MAX(la.data_acesso) as ultimo_acesso,
+            COUNT(la.id) as total_acessos
+        FROM usuarios u
+        LEFT JOIN log_acessos la ON u.id = la.user_id
+        WHERE NOT EXISTS (
+            SELECT 1 FROM membros m 
+            WHERE LOWER(TRIM(m.nome)) = LOWER(TRIM(u.username))
+            OR m.nome LIKE '%' || u.username || '%'
+        )
+        GROUP BY u.id, u.username, u.role
+        ORDER BY ultimo_acesso DESC, u.username
+    `, [], (err, rows) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json(rows);
+    });
+});
+
+// Endpoint para listar histórico de acessos recentes
+app.get('/api/log-acessos', authenticateToken, (req, res) => {
+    const allowedRoles = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas administradores e cargos mais altos podem acessar esta informação.' });
+    }
+
+    const limit = parseInt(req.query.limit) || 100;
+    
+    db.all(`
+        SELECT 
+            la.id,
+            la.username,
+            la.role,
+            la.ip_address,
+            la.user_agent,
+            la.data_acesso,
+            CASE 
+                WHEN EXISTS (
+                    SELECT 1 FROM membros m 
+                    WHERE LOWER(TRIM(m.nome)) = LOWER(TRIM(la.username))
+                    OR m.nome LIKE '%' || la.username || '%'
+                ) THEN 1 
+                ELSE 0 
+            END as tem_membro
+        FROM log_acessos la
+        ORDER BY la.data_acesso DESC
+        LIMIT ?
+    `, [limit], (err, rows) => {
         if (err) {
             return res.status(500).json({ error: err.message });
         }
