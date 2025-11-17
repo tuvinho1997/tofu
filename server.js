@@ -189,6 +189,30 @@ function initializeDatabase() {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
 
+    // Configuração de materiais por tipo de munição (por lote de 50)
+    db.run(`CREATE TABLE IF NOT EXISTS config_materiais_municao (
+        tipo TEXT PRIMARY KEY,
+        aluminio INTEGER NOT NULL DEFAULT 0,
+        cobre INTEGER NOT NULL DEFAULT 0,
+        emb_plastica INTEGER NOT NULL DEFAULT 0,
+        ferro INTEGER NOT NULL DEFAULT 0,
+        titanio INTEGER NOT NULL DEFAULT 0,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+    const configMunicaoDefaults = [
+        { tipo: '5mm', aluminio: 8, cobre: 8, emb_plastica: 8, ferro: 8, titanio: 1 },
+        { tipo: '9mm', aluminio: 10, cobre: 10, emb_plastica: 10, ferro: 10, titanio: 1 },
+        { tipo: '762mm', aluminio: 12, cobre: 12, emb_plastica: 12, ferro: 12, titanio: 1 },
+        { tipo: '12cbc', aluminio: 15, cobre: 15, emb_plastica: 15, ferro: 15, titanio: 2 }
+    ];
+    configMunicaoDefaults.forEach(cfg => {
+        db.run(
+            `INSERT OR IGNORE INTO config_materiais_municao (tipo, aluminio, cobre, emb_plastica, ferro, titanio)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [cfg.tipo, cfg.aluminio, cfg.cobre, cfg.emb_plastica, cfg.ferro, cfg.titanio]
+        );
+    });
+
     // Tabela de cadastros pendentes
     // Quando um usuário realiza um cadastro via login_simple.html, os dados são inseridos aqui.
     // Após aprovação por um administrador/líder, o cadastro é movido para as tabelas usuais de
@@ -626,6 +650,25 @@ function initializeDatabase() {
     console.log('🚀 Servidor rodando na porta', PORT);
     console.log('📱 Acesse: http://localhost:' + PORT + '/static/login_simple.html');
     console.log('👤 Usuário: tofu | Senha: tofu$2025');
+}
+
+function getConfigMateriaisMunicao() {
+    return new Promise((resolve, reject) => {
+        db.all('SELECT * FROM config_materiais_municao', (err, rows) => {
+            if (err) return reject(err);
+            const map = {};
+            rows.forEach(r => {
+                map[r.tipo] = {
+                    aluminio: r.aluminio || 0,
+                    cobre: r.cobre || 0,
+                    emb_plastica: r.emb_plastica || 0,
+                    ferro: r.ferro || 0,
+                    titanio: r.titanio || 0
+                };
+            });
+            resolve(map);
+        });
+    });
 }
 
 // Função para corrigir estoque negativo
@@ -1594,118 +1637,86 @@ app.post('/api/estoque/adicionar', authenticateToken, (req, res) => {
             return res.status(400).json({ error: 'Quantidade deve ser maior que zero' });
         }
 
-        // Calcular materiais necessários baseado na munição
-        let totalMaterial, totalTitanio;
-        switch (item) {
-            case '5mm':
-                totalMaterial = Math.ceil(qtdMunicao / 50) * 8;
-                totalTitanio = Math.ceil(qtdMunicao / 50) * 1;
-                break;
-            case '9mm':
-                totalMaterial = Math.ceil(qtdMunicao / 50) * 10;
-                totalTitanio = Math.ceil(qtdMunicao / 50) * 1;
-                break;
-            case '762mm':
-                totalMaterial = Math.ceil(qtdMunicao / 50) * 12;
-                totalTitanio = Math.ceil(qtdMunicao / 50) * 1;
-                break;
-            case '12cbc':
-                totalMaterial = Math.ceil(qtdMunicao / 50) * 15;
-                totalTitanio = Math.ceil(qtdMunicao / 50) * 2;
-                break;
-            default:
-                return res.status(400).json({ error: 'Tipo de munição inválido' });
-        }
+        const lotes = Math.ceil(qtdMunicao / 50);
 
-        // Se baixar_materiais for 'sim', verificar e subtrair materiais
-        if (baixar_materiais === 'sim') {
+        getConfigMateriaisMunicao().then(config => {
+            const cfg = config[item];
+            if (!cfg) {
+                return res.status(400).json({ error: 'Configuração de materiais não encontrada para esta munição' });
+            }
+
             const materiaisNecessarios = [
-                { nome: 'Alumínio', quantidade: totalMaterial },
-                { nome: 'Cobre', quantidade: totalMaterial },
-                { nome: 'Emb Plástica', quantidade: totalMaterial },
-                { nome: 'Ferro', quantidade: totalMaterial },
-                { nome: 'Titânio', quantidade: totalTitanio }
+                { nome: 'Alumínio', quantidade: cfg.aluminio * lotes },
+                { nome: 'Cobre', quantidade: cfg.cobre * lotes },
+                { nome: 'Emb Plástica', quantidade: cfg.emb_plastica * lotes },
+                { nome: 'Ferro', quantidade: cfg.ferro * lotes },
+                { nome: 'Titânio', quantidade: cfg.titanio * lotes }
             ];
-            // Antes de subtrair, verifica se há material suficiente
-            db.all('SELECT nome, SUM(quantidade) as quantidade FROM estoque WHERE tipo = "material" GROUP BY nome', (errMat, rows) => {
-                if (errMat) {
-                    console.error('Erro ao consultar materiais:', errMat.message);
-                    // Continua a operação, mas não baixa materiais
-                    updateMunicaoOnly();
-                    return;
-                }
 
-                const estoqueAtual = {};
-                rows.forEach(row => {
-                    estoqueAtual[row.nome] = row.quantidade;
-                });
-
-                // Verifica se há material suficiente
-                const faltaMaterial = materiaisNecessarios.find(mat => 
-                    (estoqueAtual[mat.nome] || 0) < mat.quantidade
-                );
-
-                if (faltaMaterial) {
-                    return res.status(400).json({ 
-                        error: `Material insuficiente: ${faltaMaterial.nome}. Necessário: ${faltaMaterial.quantidade}, Disponível: ${estoqueAtual[faltaMaterial.nome] || 0}` 
-                    });
-                }
-
-                // Baixar materiais
-                let materiaisProcessados = 0;
-                materiaisNecessarios.forEach(material => {
-                    db.run('UPDATE estoque SET quantidade = quantidade - ?, data_atualizacao = CURRENT_TIMESTAMP WHERE tipo = "material" AND nome = ?', 
-                           [material.quantidade, material.nome], function(errUpdate) {
-                        if (errUpdate) {
-                            console.error('Erro ao baixar material:', material.nome, errUpdate.message);
-                        }
-                        materiaisProcessados++;
-                        if (materiaisProcessados === materiaisNecessarios.length) {
-                            updateMunicaoAndFinalize();
-                        }
+            const processarAposMateriais = () => {
+                db.run('UPDATE estoque SET quantidade = quantidade + ?, data_atualizacao = CURRENT_TIMESTAMP WHERE tipo = ? AND nome = ?', 
+                       [qtdMunicao, tipo, item], function(errMun) {
+                    if (errMun) {
+                        return res.status(500).json({ error: errMun.message });
+                    }
+    
+                    res.json({ message: 'Estoque de munição atualizado com sucesso' });
+                    verificarEncomendasProntas().catch(err => {
+                        console.error('Erro ao verificar encomendas prontas após atualização de munições:', err);
                     });
                 });
+            };
 
-                function updateMunicaoAndFinalize() {
-                    // Atualizar munição
-                    db.run('UPDATE estoque SET quantidade = quantidade + ?, data_atualizacao = CURRENT_TIMESTAMP WHERE tipo = ? AND nome = ?', 
-                           [qtdMunicao, tipo, item], function(errMun) {
-                        if (errMun) {
-                            return res.status(500).json({ error: errMun.message });
-                        }
-
-                        function finalizeUpdate() {
-                            // Envia a resposta ao cliente
-                            res.json({ message: 'Estoque de munição atualizado com sucesso' });
-                            // Após atualizar o estoque, verifica se encomendas pendentes podem ser marcadas como prontas
-                            verificarEncomendasProntas().catch(err => {
-                                console.error('Erro ao verificar encomendas prontas após atualização de munições:', err);
-                            });
-                            return;
-                        }
-                        finalizeUpdate();
+            if (baixar_materiais === 'sim') {
+            const materiaisNecessarios = [
+                    { nome: 'Alumínio', quantidade: cfg.aluminio * lotes },
+                    { nome: 'Cobre', quantidade: cfg.cobre * lotes },
+                    { nome: 'Emb Plástica', quantidade: cfg.emb_plastica * lotes },
+                    { nome: 'Ferro', quantidade: cfg.ferro * lotes },
+                    { nome: 'Titânio', quantidade: cfg.titanio * lotes }
+                ];
+                db.all('SELECT nome, SUM(quantidade) as quantidade FROM estoque WHERE tipo = "material" GROUP BY nome', (errMat, rows) => {
+                    if (errMat) {
+                        console.error('Erro ao consultar materiais:', errMat.message);
+                        return processarAposMateriais();
+                    }
+    
+                    const estoqueAtual = {};
+                    rows.forEach(row => {
+                        estoqueAtual[row.nome] = row.quantidade;
                     });
-                }
-            });
-        return;
-        }
-
-        function updateMunicaoOnly() {
-            // Apenas atualizar munição sem baixar materiais
-            db.run('UPDATE estoque SET quantidade = quantidade + ?, data_atualizacao = CURRENT_TIMESTAMP WHERE tipo = ? AND nome = ?', 
-                   [qtdMunicao, tipo, item], function(err) {
-                if (err) {
-                    return res.status(500).json({ error: err.message });
-                }
-                res.json({ message: 'Estoque de munição atualizado com sucesso' });
-                // Após atualizar o estoque, verifica se encomendas pendentes podem ser marcadas como prontas
-                verificarEncomendasProntas().catch(err => {
-                    console.error('Erro ao verificar encomendas prontas após atualização de munições:', err);
+    
+                    const faltaMaterial = materiaisNecessarios.find(mat => 
+                        (estoqueAtual[mat.nome] || 0) < mat.quantidade
+                    );
+    
+                    if (faltaMaterial) {
+                        return res.status(400).json({ 
+                            error: `Material insuficiente: ${faltaMaterial.nome}. Necessário: ${faltaMaterial.quantidade}, Disponível: ${estoqueAtual[faltaMaterial.nome] || 0}` 
+                        });
+                    }
+    
+                    let materiaisProcessados = 0;
+                    materiaisNecessarios.forEach(material => {
+                        db.run('UPDATE estoque SET quantidade = quantidade - ?, data_atualizacao = CURRENT_TIMESTAMP WHERE tipo = "material" AND nome = ?', 
+                               [material.quantidade, material.nome], function(errUpdate) {
+                            if (errUpdate) {
+                                console.error('Erro ao baixar material:', material.nome, errUpdate.message);
+                            }
+                            materiaisProcessados++;
+                            if (materiaisProcessados === materiaisNecessarios.length) {
+                                processarAposMateriais();
+                            }
+                        });
+                    });
                 });
-            });
-        }
-
-        updateMunicaoOnly();
+            } else {
+                processarAposMateriais();
+            }
+        }).catch(err => {
+            console.error('Erro ao obter configuração de materiais para munição:', err);
+            res.status(500).json({ error: 'Erro ao obter configuração de materiais' });
+        });
         return;
     }
 
@@ -1825,92 +1836,83 @@ app.post('/api/estoque/fabricar', authenticateToken, (req, res) => {
         return res.status(400).json({ error: 'Número de lotes deve ser maior que zero' });
     }
 
-    // Calcular materiais necessários e munições produzidas
-    let materiaisNecessarios, municoesProduzidas;
-    switch (tipo_municao) {
-        case '5mm':
-            materiaisNecessarios = { aluminio: 8 * numLotes, cobre: 8 * numLotes, emb_plastica: 8 * numLotes, ferro: 8 * numLotes, titanio: 1 * numLotes };
-            municoesProduzidas = 50 * numLotes;
-            break;
-        case '9mm':
-            materiaisNecessarios = { aluminio: 10 * numLotes, cobre: 10 * numLotes, emb_plastica: 10 * numLotes, ferro: 10 * numLotes, titanio: 1 * numLotes };
-            municoesProduzidas = 50 * numLotes;
-            break;
-        case '762mm':
-            materiaisNecessarios = { aluminio: 12 * numLotes, cobre: 12 * numLotes, emb_plastica: 12 * numLotes, ferro: 12 * numLotes, titanio: 1 * numLotes };
-            municoesProduzidas = 50 * numLotes;
-            break;
-        case '12cbc':
-            materiaisNecessarios = { aluminio: 15 * numLotes, cobre: 15 * numLotes, emb_plastica: 15 * numLotes, ferro: 15 * numLotes, titanio: 2 * numLotes };
-            municoesProduzidas = 50 * numLotes;
-            break;
-        default:
-            return res.status(400).json({ error: 'Tipo de munição inválido' });
-    }
-
-    // Verificar se há materiais suficientes
-    db.all('SELECT nome, quantidade FROM estoque WHERE tipo = "material"', (err, rows) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
+    getConfigMateriaisMunicao().then(config => {
+        const cfg = config[tipo_municao];
+        if (!cfg) {
+            return res.status(400).json({ error: 'Configuração de materiais não encontrada para esta munição' });
         }
 
-        const estoqueMateriais = {};
-        rows.forEach(row => {
-            estoqueMateriais[row.nome] = row.quantidade;
-        });
+        const materiaisNecessarios = {
+            aluminio: cfg.aluminio * numLotes,
+            cobre: cfg.cobre * numLotes,
+            emb_plastica: cfg.emb_plastica * numLotes,
+            ferro: cfg.ferro * numLotes,
+            titanio: cfg.titanio * numLotes
+        };
+        const municoesProduzidas = 50 * numLotes;
 
-        // Verificar disponibilidade
-        const checks = [
-            { nome: 'Alumínio', necessario: materiaisNecessarios.aluminio, disponivel: estoqueMateriais['Alumínio'] || 0 },
-            { nome: 'Cobre', necessario: materiaisNecessarios.cobre, disponivel: estoqueMateriais['Cobre'] || 0 },
-            { nome: 'Emb Plástica', necessario: materiaisNecessarios.emb_plastica, disponivel: estoqueMateriais['Emb Plástica'] || 0 },
-            { nome: 'Ferro', necessario: materiaisNecessarios.ferro, disponivel: estoqueMateriais['Ferro'] || 0 },
-            { nome: 'Titânio', necessario: materiaisNecessarios.titanio, disponivel: estoqueMateriais['Titânio'] || 0 }
-        ];
-
-        const materialInsuficiente = checks.find(check => check.disponivel < check.necessario);
-        if (materialInsuficiente) {
-            return res.status(400).json({ 
-                error: `Material insuficiente: ${materialInsuficiente.nome}. Necessário: ${materialInsuficiente.necessario}, Disponível: ${materialInsuficiente.disponivel}` 
+        db.all('SELECT nome, quantidade FROM estoque WHERE tipo = "material"', (err, rows) => {
+            if (err) {
+                return res.status(500).json({ error: err.message });
+            }
+    
+            const estoqueMateriais = {};
+            rows.forEach(row => {
+                estoqueMateriais[row.nome] = row.quantidade;
             });
-        }
-
-        // Baixar materiais
-        const updates = [
-            { nome: 'Alumínio', quantidade: materiaisNecessarios.aluminio },
-            { nome: 'Cobre', quantidade: materiaisNecessarios.cobre },
-            { nome: 'Emb Plástica', quantidade: materiaisNecessarios.emb_plastica },
-            { nome: 'Ferro', quantidade: materiaisNecessarios.ferro },
-            { nome: 'Titânio', quantidade: materiaisNecessarios.titanio }
-        ];
-
-        let updatesCompletos = 0;
-        updates.forEach(update => {
-            db.run('UPDATE estoque SET quantidade = quantidade - ?, data_atualizacao = CURRENT_TIMESTAMP WHERE tipo = "material" AND nome = ?', 
-                   [update.quantidade, update.nome], function(errUpdate) {
-                if (errUpdate) {
-                    console.error('Erro ao baixar material:', update.nome, errUpdate.message);
-                }
-                updatesCompletos++;
-                if (updatesCompletos === updates.length) {
-                    // Adicionar munições
-                    db.run('UPDATE estoque SET quantidade = quantidade + ?, data_atualizacao = CURRENT_TIMESTAMP WHERE tipo = "municao" AND nome = ?', 
-                           [municoesProduzidas, tipo_municao], function(errMunicao) {
-                        if (errMunicao) {
-                            return res.status(500).json({ error: errMunicao.message });
-                        }
-                        res.json({ 
-                            message: `Fabricação concluída com sucesso! Produzidas ${municoesProduzidas} munições ${tipo_municao}`,
-                            municoes_produzidas: municoesProduzidas
+    
+            const checks = [
+                { nome: 'Alumínio', necessario: materiaisNecessarios.aluminio, disponivel: estoqueMateriais['Alumínio'] || 0 },
+                { nome: 'Cobre', necessario: materiaisNecessarios.cobre, disponivel: estoqueMateriais['Cobre'] || 0 },
+                { nome: 'Emb Plástica', necessario: materiaisNecessarios.emb_plastica, disponivel: estoqueMateriais['Emb Plástica'] || 0 },
+                { nome: 'Ferro', necessario: materiaisNecessarios.ferro, disponivel: estoqueMateriais['Ferro'] || 0 },
+                { nome: 'Titânio', necessario: materiaisNecessarios.titanio, disponivel: estoqueMateriais['Titânio'] || 0 }
+            ];
+    
+            const materialInsuficiente = checks.find(check => check.disponivel < check.necessario);
+            if (materialInsuficiente) {
+                return res.status(400).json({ 
+                    error: `Material insuficiente: ${materialInsuficiente.nome}. Necessário: ${materialInsuficiente.necessario}, Disponível: ${materialInsuficiente.disponivel}` 
+                });
+            }
+    
+            const updates = [
+                { nome: 'Alumínio', quantidade: materiaisNecessarios.aluminio },
+                { nome: 'Cobre', quantidade: materiaisNecessarios.cobre },
+                { nome: 'Emb Plástica', quantidade: materiaisNecessarios.emb_plastica },
+                { nome: 'Ferro', quantidade: materiaisNecessarios.ferro },
+                { nome: 'Titânio', quantidade: materiaisNecessarios.titanio }
+            ];
+    
+            let updatesCompletos = 0;
+            updates.forEach(update => {
+                db.run('UPDATE estoque SET quantidade = quantidade - ?, data_atualizacao = CURRENT_TIMESTAMP WHERE tipo = "material" AND nome = ?', 
+                       [update.quantidade, update.nome], function(errUpdate) {
+                    if (errUpdate) {
+                        console.error('Erro ao baixar material:', update.nome, errUpdate.message);
+                    }
+                    updatesCompletos++;
+                    if (updatesCompletos === updates.length) {
+                        db.run('UPDATE estoque SET quantidade = quantidade + ?, data_atualizacao = CURRENT_TIMESTAMP WHERE tipo = "municao" AND nome = ?', 
+                               [municoesProduzidas, tipo_municao], function(errMunicao) {
+                            if (errMunicao) {
+                                return res.status(500).json({ error: errMunicao.message });
+                            }
+                            res.json({ 
+                                message: `Fabricação concluída com sucesso! Produzidas ${municoesProduzidas} munições ${tipo_municao}`,
+                                municoes_produzidas: municoesProduzidas
+                            });
+                            verificarEncomendasProntas().catch(err => {
+                                console.error('Erro ao verificar encomendas prontas após fabricação:', err);
+                            });
                         });
-                        // Após fabricar munições, verifica se encomendas pendentes podem ser marcadas como prontas
-                        verificarEncomendasProntas().catch(err => {
-                            console.error('Erro ao verificar encomendas prontas após fabricação:', err);
-                        });
-                    });
-                }
+                    }
+                });
             });
         });
+    }).catch(err => {
+        console.error('Erro ao obter configuração de materiais para munição:', err);
+        res.status(500).json({ error: 'Erro ao obter configuração de materiais' });
     });
 });
 
@@ -2617,6 +2619,76 @@ app.put('/api/config/materiais-rota', authenticateToken, (req, res) => {
             }
         });
     });
+});
+
+// Configuração de materiais por munição (apenas maiores cargos)
+app.get('/api/config/materiais-municao', authenticateToken, (req, res) => {
+    const allowedRoles = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado.' });
+    }
+    db.all('SELECT * FROM config_materiais_municao ORDER BY tipo', (err, rows) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json(rows);
+    });
+});
+
+app.put('/api/config/materiais-municao', authenticateToken, (req, res) => {
+    const allowedRoles = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado.' });
+    }
+    const { configuracoes } = req.body || {};
+    if (!Array.isArray(configuracoes) || configuracoes.length === 0) {
+        return res.status(400).json({ error: 'Envie um array de configurações.' });
+    }
+
+    let processados = 0;
+    let erros = [];
+    configuracoes.forEach(cfg => {
+        if (!cfg || !cfg.tipo) {
+            erros.push('Configuração inválida (tipo ausente)');
+            processados++;
+            if (processados === configuracoes.length) finalizar();
+            return;
+        }
+        const params = [
+            cfg.aluminio ?? 0,
+            cfg.cobre ?? 0,
+            cfg.emb_plastica ?? 0,
+            cfg.ferro ?? 0,
+            cfg.titanio ?? 0,
+            cfg.tipo
+        ];
+        db.run(
+            `INSERT INTO config_materiais_municao (aluminio, cobre, emb_plastica, ferro, titanio, tipo)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(tipo) DO UPDATE SET
+                aluminio = excluded.aluminio,
+                cobre = excluded.cobre,
+                emb_plastica = excluded.emb_plastica,
+                ferro = excluded.ferro,
+                titanio = excluded.titanio,
+                updated_at = CURRENT_TIMESTAMP`,
+            params,
+            err => {
+                if (err) {
+                    erros.push(`Erro ao salvar ${cfg.tipo}: ${err.message}`);
+                }
+                processados++;
+                if (processados === configuracoes.length) finalizar();
+            }
+        );
+    });
+
+    function finalizar() {
+        if (erros.length > 0) {
+            return res.status(500).json({ error: 'Algumas configurações falharam', detalhes: erros });
+        }
+        res.json({ message: 'Configurações de materiais por munição atualizadas com sucesso' });
+    }
 });
 
 app.delete('/api/rotas/:id', authenticateToken, (req, res) => {
