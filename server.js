@@ -55,7 +55,19 @@ app.use('/static', express.static(path.join(__dirname, 'static')));
 // Configuração do multer para upload de imagens
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        const uploadDir = 'static/images/items';
+        // Determinar o diretório baseado no campo do formulário e rota
+        let uploadDir = 'static/images/items';
+        
+        // Se for upload de mapa, usar pasta específica
+        if (file.fieldname === 'mapa') {
+            uploadDir = 'static/images/mapa';
+        } else if (file.fieldname === 'imagem') {
+            // Verificar se a rota é de setup de roupas
+            if (req.path && req.path.includes('setup-roupas')) {
+                uploadDir = 'static/images/roupas';
+            }
+        }
+        
         if (!fs.existsSync(uploadDir)) {
             fs.mkdirSync(uploadDir, { recursive: true });
         }
@@ -672,6 +684,44 @@ function initializeDatabase() {
         categoria TEXT,
         data_criacao DATETIME DEFAULT CURRENT_TIMESTAMP,
         criado_por TEXT
+    )`);
+
+    // Criar tabela para mapa da facção
+    db.run(`CREATE TABLE IF NOT EXISTS mapa_faccao (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        caminho_imagem TEXT,
+        data_atualizacao DATETIME DEFAULT CURRENT_TIMESTAMP,
+        atualizado_por TEXT
+    )`);
+
+    // Criar tabela para categorias de roupas
+    db.run(`CREATE TABLE IF NOT EXISTS categorias_roupas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome TEXT UNIQUE NOT NULL,
+        data_criacao DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+
+    // Criar tabela para variações de roupas (cores) - deve ser criada antes de setup_roupas
+    db.run(`CREATE TABLE IF NOT EXISTS variacoes_roupas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome TEXT NOT NULL,
+        categoria_id INTEGER,
+        data_criacao DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (categoria_id) REFERENCES categorias_roupas(id)
+    )`);
+
+    // Criar tabela para configurações de roupas
+    db.run(`CREATE TABLE IF NOT EXISTS setup_roupas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tipo TEXT NOT NULL CHECK(tipo IN ('dia_a_dia', 'acao')),
+        caminho_imagem TEXT,
+        categoria_id INTEGER,
+        numero INTEGER,
+        variacao_id INTEGER,
+        data_atualizacao DATETIME DEFAULT CURRENT_TIMESTAMP,
+        atualizado_por TEXT,
+        FOREIGN KEY (categoria_id) REFERENCES categorias_roupas(id),
+        FOREIGN KEY (variacao_id) REFERENCES variacoes_roupas(id)
     )`);
 
     // Criar usuário admin padrão
@@ -3905,6 +3955,324 @@ app.delete('/api/videos-educativos/:id', authenticateToken, (req, res) => {
 
             res.json({ message: 'Vídeo deletado com sucesso' });
         });
+    });
+});
+
+// ==================== LOCALIZAÇÃO FACÇÃO - MAPA ====================
+
+// Obter mapa da facção
+app.get('/api/mapa-faccao', authenticateToken, (req, res) => {
+    db.get('SELECT * FROM mapa_faccao ORDER BY data_atualizacao DESC LIMIT 1', [], (err, mapa) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json(mapa || null);
+    });
+});
+
+// Atualizar mapa da facção
+app.post('/api/mapa-faccao', authenticateToken, upload.single('mapa'), (req, res) => {
+    const allowedRoles = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+        if (req.file) {
+            fs.unlink(req.file.path, () => {});
+        }
+        return res.status(403).json({ error: 'Acesso negado. Apenas admin, Grande Mestre ou Mestre dos Ventos podem atualizar o mapa.' });
+    }
+
+    if (!req.file) {
+        return res.status(400).json({ error: 'Nenhuma imagem foi enviada' });
+    }
+
+    const caminhoImagem = `/static/images/mapa/${req.file.filename}`;
+    const atualizadoPor = req.user.username || 'sistema';
+
+    // Verificar se já existe um mapa
+    db.get('SELECT * FROM mapa_faccao ORDER BY data_atualizacao DESC LIMIT 1', [], (err, mapaExistente) => {
+        if (err) {
+            fs.unlink(req.file.path, () => {});
+            return res.status(500).json({ error: err.message });
+        }
+
+        if (mapaExistente) {
+            // Atualizar mapa existente
+            if (mapaExistente.caminho_imagem) {
+                const oldPath = path.join(__dirname, mapaExistente.caminho_imagem);
+                fs.unlink(oldPath, () => {}); // Ignorar erro se arquivo não existir
+            }
+            db.run(
+                'UPDATE mapa_faccao SET caminho_imagem = ?, data_atualizacao = CURRENT_TIMESTAMP, atualizado_por = ? WHERE id = ?',
+                [caminhoImagem, atualizadoPor, mapaExistente.id],
+                function(updateErr) {
+                    if (updateErr) {
+                        fs.unlink(req.file.path, () => {});
+                        return res.status(500).json({ error: updateErr.message });
+                    }
+                    res.json({
+                        message: 'Mapa atualizado com sucesso',
+                        caminho_imagem: caminhoImagem
+                    });
+                }
+            );
+        } else {
+            // Criar novo mapa
+            db.run(
+                'INSERT INTO mapa_faccao (caminho_imagem, atualizado_por) VALUES (?, ?)',
+                [caminhoImagem, atualizadoPor],
+                function(insertErr) {
+                    if (insertErr) {
+                        fs.unlink(req.file.path, () => {});
+                        return res.status(500).json({ error: insertErr.message });
+                    }
+                    res.json({
+                        message: 'Mapa adicionado com sucesso',
+                        id: this.lastID,
+                        caminho_imagem: caminhoImagem
+                    });
+                }
+            );
+        }
+    });
+});
+
+// ==================== SETUP - CATEGORIAS DE ROUPAS ====================
+
+// Listar categorias de roupas
+app.get('/api/categorias-roupas', authenticateToken, (req, res) => {
+    db.all('SELECT * FROM categorias_roupas ORDER BY nome', [], (err, categorias) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json(categorias);
+    });
+});
+
+// Criar categoria de roupa
+app.post('/api/categorias-roupas', authenticateToken, (req, res) => {
+    const { nome } = req.body;
+    if (!nome || nome.trim() === '') {
+        return res.status(400).json({ error: 'Nome da categoria é obrigatório' });
+    }
+
+    db.run(
+        'INSERT INTO categorias_roupas (nome) VALUES (?)',
+        [nome.trim()],
+        function(err) {
+            if (err) {
+                if (err.message.includes('UNIQUE')) {
+                    return res.status(400).json({ error: 'Categoria já existe' });
+                }
+                return res.status(500).json({ error: err.message });
+            }
+            res.json({
+                message: 'Categoria criada com sucesso',
+                id: this.lastID,
+                nome: nome.trim()
+            });
+        }
+    );
+});
+
+// Deletar categoria de roupa
+app.delete('/api/categorias-roupas/:id', authenticateToken, (req, res) => {
+    const allowedRoles = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas admin, Grande Mestre ou Mestre dos Ventos podem deletar categorias.' });
+    }
+
+    const { id } = req.params;
+    db.run('DELETE FROM categorias_roupas WHERE id = ?', [id], function(err) {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        if (this.changes === 0) {
+            return res.status(404).json({ error: 'Categoria não encontrada' });
+        }
+        res.json({ message: 'Categoria deletada com sucesso' });
+    });
+});
+
+// ==================== SETUP - VARIAÇÕES DE ROUPAS ====================
+
+// Listar variações de roupas
+app.get('/api/variacoes-roupas', authenticateToken, (req, res) => {
+    const { categoria_id } = req.query;
+    let query = 'SELECT * FROM variacoes_roupas';
+    let params = [];
+    
+    if (categoria_id) {
+        query += ' WHERE categoria_id = ?';
+        params.push(categoria_id);
+    }
+    
+    query += ' ORDER BY nome';
+    
+    db.all(query, params, (err, variacoes) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json(variacoes);
+    });
+});
+
+// Criar variação de roupa
+app.post('/api/variacoes-roupas', authenticateToken, (req, res) => {
+    const { nome, categoria_id } = req.body;
+    if (!nome || nome.trim() === '') {
+        return res.status(400).json({ error: 'Nome da variação é obrigatório' });
+    }
+    if (!categoria_id) {
+        return res.status(400).json({ error: 'ID da categoria é obrigatório' });
+    }
+
+    db.run(
+        'INSERT INTO variacoes_roupas (nome, categoria_id) VALUES (?, ?)',
+        [nome.trim(), categoria_id],
+        function(err) {
+            if (err) {
+                return res.status(500).json({ error: err.message });
+            }
+            res.json({
+                message: 'Variação criada com sucesso',
+                id: this.lastID,
+                nome: nome.trim(),
+                categoria_id: categoria_id
+            });
+        }
+    );
+});
+
+// Deletar variação de roupa
+app.delete('/api/variacoes-roupas/:id', authenticateToken, (req, res) => {
+    const allowedRoles = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas admin, Grande Mestre ou Mestre dos Ventos podem deletar variações.' });
+    }
+
+    const { id } = req.params;
+    db.run('DELETE FROM variacoes_roupas WHERE id = ?', [id], function(err) {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        if (this.changes === 0) {
+            return res.status(404).json({ error: 'Variação não encontrada' });
+        }
+        res.json({ message: 'Variação deletada com sucesso' });
+    });
+});
+
+// ==================== SETUP - CONFIGURAÇÕES DE ROUPAS ====================
+
+// Obter configurações de roupas
+app.get('/api/setup-roupas', authenticateToken, (req, res) => {
+    db.all(`
+        SELECT 
+            sr.*,
+            cr.nome as categoria_nome,
+            vr.nome as variacao_nome
+        FROM setup_roupas sr
+        LEFT JOIN categorias_roupas cr ON sr.categoria_id = cr.id
+        LEFT JOIN variacoes_roupas vr ON sr.variacao_id = vr.id
+        ORDER BY sr.tipo
+    `, [], (err, configs) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json(configs);
+    });
+});
+
+// Atualizar configuração de roupa
+app.put('/api/setup-roupas/:tipo', authenticateToken, upload.single('imagem'), (req, res) => {
+    const allowedRoles = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+        if (req.file) {
+            fs.unlink(req.file.path, () => {});
+        }
+        return res.status(403).json({ error: 'Acesso negado. Apenas admin, Grande Mestre ou Mestre dos Ventos podem atualizar configurações.' });
+    }
+
+    const { tipo } = req.params;
+    if (tipo !== 'dia_a_dia' && tipo !== 'acao') {
+        if (req.file) {
+            fs.unlink(req.file.path, () => {});
+        }
+        return res.status(400).json({ error: 'Tipo inválido. Use "dia_a_dia" ou "acao"' });
+    }
+
+    const { categoria_id, numero, variacao_id } = req.body;
+    const atualizadoPor = req.user.username || 'sistema';
+
+    // Verificar se já existe configuração para este tipo
+    db.get('SELECT * FROM setup_roupas WHERE tipo = ?', [tipo], (err, configExistente) => {
+        if (err) {
+            if (req.file) {
+                fs.unlink(req.file.path, () => {});
+            }
+            return res.status(500).json({ error: err.message });
+        }
+
+        let caminhoImagem = null;
+        if (req.file) {
+            caminhoImagem = `/static/images/roupas/${req.file.filename}`;
+        }
+
+        if (configExistente) {
+            // Atualizar configuração existente
+            let updateQuery = 'UPDATE setup_roupas SET';
+            let updateParams = [];
+            
+            if (caminhoImagem) {
+                // Remover imagem antiga se houver
+                if (configExistente.caminho_imagem) {
+                    const oldPath = path.join(__dirname, configExistente.caminho_imagem);
+                    fs.unlink(oldPath, () => {});
+                }
+                updateQuery += ' caminho_imagem = ?,';
+                updateParams.push(caminhoImagem);
+            }
+            
+            updateQuery += ' categoria_id = ?, numero = ?, variacao_id = ?, data_atualizacao = CURRENT_TIMESTAMP, atualizado_por = ? WHERE tipo = ?';
+            updateParams.push(
+                categoria_id || null,
+                numero ? parseInt(numero) : null,
+                variacao_id || null,
+                atualizadoPor,
+                tipo
+            );
+
+            db.run(updateQuery, updateParams, function(updateErr) {
+                if (updateErr) {
+                    if (req.file) {
+                        fs.unlink(req.file.path, () => {});
+                    }
+                    return res.status(500).json({ error: updateErr.message });
+                }
+                res.json({
+                    message: 'Configuração atualizada com sucesso',
+                    caminho_imagem: caminhoImagem || configExistente.caminho_imagem
+                });
+            });
+        } else {
+            // Criar nova configuração
+            db.run(
+                'INSERT INTO setup_roupas (tipo, caminho_imagem, categoria_id, numero, variacao_id, atualizado_por) VALUES (?, ?, ?, ?, ?, ?)',
+                [tipo, caminhoImagem, categoria_id || null, numero ? parseInt(numero) : null, variacao_id || null, atualizadoPor],
+                function(insertErr) {
+                    if (insertErr) {
+                        if (req.file) {
+                            fs.unlink(req.file.path, () => {});
+                        }
+                        return res.status(500).json({ error: insertErr.message });
+                    }
+                    res.json({
+                        message: 'Configuração criada com sucesso',
+                        id: this.lastID,
+                        caminho_imagem: caminhoImagem
+                    });
+                }
+            );
+        }
     });
 });
 
