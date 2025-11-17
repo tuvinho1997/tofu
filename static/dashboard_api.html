@@ -1793,7 +1793,7 @@
                                             <select id="variacaoDiaADia">
                                                 <option value="">Nenhuma variação</option>
                                             </select>
-                                            <button type="button" class="btn-secondary" onclick="abrirNovaVariacao('dia_a_dia')" style="margin-top: 5px; font-size: 12px;">+ Nova Variação</button>
+                                            <p style="margin-top: 5px; color: #95a5a6; font-size: 11px;">Selecione a categoria e número para ver as variações disponíveis</p>
                                         </div>
                                         <button type="submit" class="btn-primary">Finalizar Configuração</button>
                                     </form>
@@ -1839,7 +1839,7 @@
                                             <select id="variacaoAcao">
                                                 <option value="">Nenhuma variação</option>
                                             </select>
-                                            <button type="button" class="btn-secondary" onclick="abrirNovaVariacao('acao')" style="margin-top: 5px; font-size: 12px;">+ Nova Variação</button>
+                                            <p style="margin-top: 5px; color: #95a5a6; font-size: 11px;">Selecione a categoria e número para ver as variações disponíveis</p>
                                         </div>
                                         <button type="submit" class="btn-primary">Finalizar Configuração</button>
                                     </form>
@@ -8036,67 +8036,169 @@ let editingEncomendaId = null;
             const container = document.getElementById(containerId);
             if (!container) return;
 
-            // Buscar todas as configurações para este tipo (pode ter múltiplas se mudarmos a estrutura)
-            // Por enquanto, busca apenas a configuração atual
-            const config = setupRoupas[tipo];
-            if (!config || !config.categoria_id) {
-                container.innerHTML = '<p style="color: #95a5a6; font-size: 12px;">Nenhuma categoria configurada ainda</p>';
-                return;
-            }
-
-            // Buscar informações da categoria
-            const categoria = categoriasRoupas.find(c => c.id === config.categoria_id);
-            if (!categoria) {
-                container.innerHTML = '<p style="color: #95a5a6; font-size: 12px;">Categoria não encontrada</p>';
-                return;
-            }
-
-            // Buscar variações se houver número
-            let variacoes = [];
-            if (config.numero) {
-                try {
-                    const token = localStorage.getItem('authToken');
-                    const response = await fetch(`${API_BASE}/variacoes-roupas?categoria_id=${config.categoria_id}&numero=${config.numero}`, {
-                        headers: {
-                            'Authorization': `Bearer ${token}`
-                        }
-                    });
-                    if (response.ok) {
-                        variacoes = await response.json();
+            try {
+                const token = localStorage.getItem('authToken');
+                const response = await fetch(`${API_BASE}/setup-roupas?tipo=${tipo}`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
                     }
-                } catch (error) {
-                    console.error('Erro ao carregar variações:', error);
+                });
+                
+                if (!response.ok) {
+                    container.innerHTML = '<p style="color: #95a5a6; font-size: 12px;">Erro ao carregar configurações</p>';
+                    return;
                 }
-            }
+                
+                const configs = await response.json();
+                
+                if (!configs || configs.length === 0) {
+                    container.innerHTML = '<p style="color: #95a5a6; font-size: 12px;">Nenhuma categoria configurada ainda</p>';
+                    return;
+                }
 
-            container.innerHTML = `
-                <div style="background: rgba(52, 152, 219, 0.1); border: 1px solid rgba(52, 152, 219, 0.3); border-radius: 8px; padding: 15px; margin-bottom: 10px;">
-                    <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px;">
-                        <div style="flex: 1;">
-                            <h6 style="margin: 0 0 8px 0; color: #ecf0f1; font-size: 15px; font-weight: 600;">${categoria.nome}</h6>
-                            ${config.numero ? `<p style="margin: 0; color: #95a5a6; font-size: 13px;">Número: <strong style="color: #3498db; font-size: 14px;">${config.numero}</strong></p>` : '<p style="margin: 0; color: #95a5a6; font-size: 12px;">Número não definido</p>'}
-                        </div>
-                    </div>
-                    ${variacoes.length > 0 ? `
-                        <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);">
-                            <p style="margin: 0 0 8px 0; color: #95a5a6; font-size: 12px; font-weight: 500;">Variações disponíveis:</p>
-                            <div style="display: flex; flex-wrap: wrap; gap: 6px;">
-                                ${variacoes.map(v => `
-                                    <span style="background: ${v.id === config.variacao_id ? 'rgba(46, 204, 113, 0.3)' : 'rgba(52, 152, 219, 0.2)'}; 
-                                                 color: ${v.id === config.variacao_id ? '#2ecc71' : '#3498db'}; 
-                                                 padding: 5px 12px; 
-                                                 border-radius: 12px; 
-                                                 font-size: 12px;
-                                                 border: ${v.id === config.variacao_id ? '1px solid rgba(46, 204, 113, 0.5)' : 'none'};
-                                                 font-weight: ${v.id === config.variacao_id ? '600' : '400'};">
-                                        ${v.nome}${v.id === config.variacao_id ? ' ✓' : ''}
-                                    </span>
-                                `).join('')}
+                const user = JSON.parse(localStorage.getItem('user') || '{}');
+                const canEdit = ['admin', 'grande-mestre', 'mestre-dos-ventos'].includes(user.role);
+
+                // Renderizar cada configuração
+                const cardsHTML = await Promise.all(configs.map(async (config) => {
+                    const categoria = categoriasRoupas.find(c => c.id === config.categoria_id);
+                    if (!categoria) return '';
+
+                    // Buscar variações se houver número
+                    let variacoes = [];
+                    if (config.numero) {
+                        try {
+                            const variacoesResponse = await fetch(`${API_BASE}/variacoes-roupas?categoria_id=${config.categoria_id}&numero=${config.numero}`, {
+                                headers: {
+                                    'Authorization': `Bearer ${token}`
+                                }
+                            });
+                            if (variacoesResponse.ok) {
+                                variacoes = await variacoesResponse.json();
+                            }
+                        } catch (error) {
+                            console.error('Erro ao carregar variações:', error);
+                        }
+                    }
+
+                    return `
+                        <div style="background: rgba(52, 152, 219, 0.1); border: 1px solid rgba(52, 152, 219, 0.3); border-radius: 8px; padding: 15px; margin-bottom: 10px; position: relative;">
+                            ${canEdit ? `
+                                <div style="position: absolute; top: 10px; right: 10px; display: flex; gap: 8px;">
+                                    <button type="button" 
+                                            onclick="editarConfiguracao(${config.id}, '${tipo}')"
+                                            style="background: rgba(241, 196, 15, 0.2); color: #f1c40f; border: 1px solid rgba(241, 196, 15, 0.4); padding: 4px 10px; border-radius: 6px; font-size: 11px; cursor: pointer;">
+                                        ✏️ Editar
+                                    </button>
+                                    <button type="button" 
+                                            onclick="deletarConfiguracao(${config.id}, '${tipo}')"
+                                            style="background: rgba(231, 76, 60, 0.2); color: #e74c3c; border: 1px solid rgba(231, 76, 60, 0.4); padding: 4px 10px; border-radius: 6px; font-size: 11px; cursor: pointer;">
+                                        🗑️ Excluir
+                                    </button>
+                                </div>
+                            ` : ''}
+                            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px; ${canEdit ? 'padding-right: 120px;' : ''}">
+                                <div style="flex: 1;">
+                                    <h6 style="margin: 0 0 8px 0; color: #ecf0f1; font-size: 15px; font-weight: 600;">${categoria.nome}</h6>
+                                    ${config.numero ? `<p style="margin: 0; color: #95a5a6; font-size: 13px;">Número: <strong style="color: #3498db; font-size: 14px;">${config.numero}</strong></p>` : '<p style="margin: 0; color: #95a5a6; font-size: 12px;">Número não definido</p>'}
+                                </div>
                             </div>
+                            ${variacoes.length > 0 ? `
+                                <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);">
+                                    <p style="margin: 0 0 8px 0; color: #95a5a6; font-size: 12px; font-weight: 500;">Variações disponíveis:</p>
+                                    <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                                        ${variacoes.map(v => `
+                                            <span style="background: ${v.id === config.variacao_id ? 'rgba(46, 204, 113, 0.3)' : 'rgba(52, 152, 219, 0.2)'}; 
+                                                         color: ${v.id === config.variacao_id ? '#2ecc71' : '#3498db'}; 
+                                                         padding: 5px 12px; 
+                                                         border-radius: 12px; 
+                                                         font-size: 12px;
+                                                         border: ${v.id === config.variacao_id ? '1px solid rgba(46, 204, 113, 0.5)' : 'none'};
+                                                         font-weight: ${v.id === config.variacao_id ? '600' : '400'};">
+                                                ${v.nome}${v.id === config.variacao_id ? ' ✓' : ''}
+                                            </span>
+                                        `).join('')}
+                                    </div>
+                                </div>
+                            ` : config.numero ? '<p style="margin-top: 12px; color: #95a5a6; font-size: 11px;">Nenhuma variação cadastrada para este número</p>' : ''}
                         </div>
-                    ` : config.numero ? '<p style="margin-top: 12px; color: #95a5a6; font-size: 11px;">Nenhuma variação cadastrada para este número</p>' : ''}
-                </div>
-            `;
+                    `;
+                }));
+
+                container.innerHTML = cardsHTML.join('');
+            } catch (error) {
+                console.error('Erro ao renderizar cards:', error);
+                container.innerHTML = '<p style="color: #95a5a6; font-size: 12px;">Erro ao carregar configurações</p>';
+            }
+        }
+
+        // Editar configuração
+        async function editarConfiguracao(configId, tipo) {
+            try {
+                const token = localStorage.getItem('authToken');
+                const response = await fetch(`${API_BASE}/setup-roupas`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Erro ao carregar configurações');
+                }
+                
+                const configs = await response.json();
+                const config = configs.find(c => c.id === configId);
+                
+                if (!config) {
+                    alert('Configuração não encontrada');
+                    return;
+                }
+
+                // Preencher formulário com dados da configuração
+                document.getElementById(`categoria${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).value = config.categoria_id;
+                document.getElementById(`numero${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).value = config.numero || '';
+                
+                // Carregar variações
+                if (config.categoria_id && config.numero) {
+                    await loadVariacoesRoupas(config.categoria_id, tipo, config.numero);
+                    document.getElementById(`variacao${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).value = config.variacao_id || '';
+                }
+                
+                // Armazenar ID da configuração sendo editada
+                document.getElementById(`form${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).dataset.editingId = configId;
+                
+                // Scroll para o formulário
+                document.getElementById(`form${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } catch (error) {
+                alert('Erro ao carregar configuração: ' + error.message);
+            }
+        }
+
+        // Deletar configuração
+        async function deletarConfiguracao(configId, tipo) {
+            if (!confirm('Tem certeza que deseja excluir esta configuração?')) {
+                return;
+            }
+            
+            try {
+                const token = localStorage.getItem('authToken');
+                const response = await fetch(`${API_BASE}/setup-roupas/${configId}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Erro ao deletar configuração');
+                }
+                
+                alert('Configuração excluída com sucesso!');
+                await renderizarCardsCategorias(tipo);
+            } catch (error) {
+                alert('Erro ao excluir configuração: ' + error.message);
+            }
         }
 
         // Atualizar selects de categorias
@@ -8329,20 +8431,46 @@ let editingEncomendaId = null;
             const numero = document.getElementById(`numero${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).value;
             const variacaoId = document.getElementById(`variacao${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).value;
             
+            // Verificar se está editando uma configuração existente
+            const form = document.getElementById(`form${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`);
+            const editingId = form.dataset.editingId;
+            
             try {
                 const token = localStorage.getItem('authToken');
-                const response = await fetch(`${API_BASE}/setup-roupas/${tipo}`, {
-                    method: 'PUT',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`
-                    },
-                    body: JSON.stringify({
-                        categoria_id: categoriaId || null,
-                        numero: numero ? parseInt(numero) : null,
-                        variacao_id: variacaoId || null
-                    })
-                });
+                let response;
+                
+                if (editingId) {
+                    // Atualizar configuração existente
+                    response = await fetch(`${API_BASE}/setup-roupas/${editingId}`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`
+                        },
+                        body: JSON.stringify({
+                            categoria_id: categoriaId || null,
+                            numero: numero ? parseInt(numero) : null,
+                            variacao_id: variacaoId || null
+                        })
+                    });
+                    // Limpar editingId após salvar
+                    delete form.dataset.editingId;
+                } else {
+                    // Criar nova configuração
+                    response = await fetch(`${API_BASE}/setup-roupas`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`
+                        },
+                        body: JSON.stringify({
+                            tipo: tipo,
+                            categoria_id: categoriaId || null,
+                            numero: numero ? parseInt(numero) : null,
+                            variacao_id: variacaoId || null
+                        })
+                    });
+                }
                 
                 if (!response.ok) {
                     const errorText = await response.text();
@@ -8358,7 +8486,11 @@ let editingEncomendaId = null;
                 const data = await response.json();
                 
                 alert('Configuração salva com sucesso!');
-                await loadSetupRoupas();
+                
+                // Limpar formulário
+                form.reset();
+                document.getElementById(`variacao${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).innerHTML = '<option value="">Nenhuma variação</option>';
+                
                 // Renderizar cards após salvar
                 await renderizarCardsCategorias(tipo);
             } catch (error) {
