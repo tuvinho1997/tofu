@@ -1775,7 +1775,6 @@
                                         <img id="imagemDiaADia" src="" alt="Roupa Dia a Dia" style="max-width: 100%; max-height: 100%; object-fit: contain; display: none;">
                                         <div id="placeholderDiaADia" style="color: #7f8c8d; text-align: center;">
                                             <p>Nenhuma imagem</p>
-                                            <button class="btn-secondary" onclick="abrirUploadRoupa('dia_a_dia')" style="margin-top: 10px;">Adicionar Imagem</button>
                                         </div>
                                     </div>
                                 </div>
@@ -1827,7 +1826,6 @@
                                         <img id="imagemAcao" src="" alt="Roupa de Ação" style="max-width: 100%; max-height: 100%; object-fit: contain; display: none;">
                                         <div id="placeholderAcao" style="color: #7f8c8d; text-align: center;">
                                             <p>Nenhuma imagem</p>
-                                            <button class="btn-secondary" onclick="abrirUploadRoupa('acao')" style="margin-top: 10px;">Adicionar Imagem</button>
                                         </div>
                                     </div>
                                 </div>
@@ -6185,7 +6183,8 @@ let editingEncomendaId = null;
                     
                     const token = localStorage.getItem('authToken');
                     
-                    // Buscar configuração existente para este tipo
+                    // Buscar configuração existente para este tipo que tenha imagem
+                    // Se não houver, criar uma nova apenas com a imagem (sem categoria)
                     let configExistente = null;
                     try {
                         const configResponse = await fetch(`${API_BASE}/setup-roupas?tipo=${tipo}`, {
@@ -6195,9 +6194,11 @@ let editingEncomendaId = null;
                         });
                         if (configResponse.ok) {
                             const configs = await configResponse.json();
-                            // Pegar a primeira configuração encontrada (ou criar nova se não houver)
                             if (configs && configs.length > 0) {
-                                configExistente = configs[0];
+                                // Priorizar configuração que já tem imagem
+                                configExistente = configs.find(c => c.caminho_imagem);
+                                // Se não houver nenhuma com imagem, criar uma nova apenas com imagem
+                                // (não atualizar uma configuração de categoria existente)
                             }
                         }
                     } catch (err) {
@@ -6206,10 +6207,9 @@ let editingEncomendaId = null;
                     
                     let response;
                     if (configExistente) {
-                        // Atualizar configuração existente
-                        formData.append('categoria_id', configExistente.categoria_id || '');
-                        formData.append('numero', configExistente.numero || '');
-                        formData.append('variacao_numero', configExistente.variacao_numero || '');
+                        // Atualizar configuração existente APENAS com a imagem, preservando categoria, numero e variacao_numero
+                        // Não enviar categoria_id, numero e variacao_numero no formData para não alterá-los
+                        // O backend deve atualizar apenas o caminho_imagem
                         response = await fetch(`${API_BASE}/setup-roupas/${configExistente.id}`, {
                             method: 'PUT',
                             headers: {
@@ -8348,13 +8348,14 @@ let editingEncomendaId = null;
                 }
                 
                 const configs = await response.json();
-                setupRoupas = {};
                 
-                configs.forEach(config => {
-                    setupRoupas[config.tipo] = config;
-                });
+                // Organizar por tipo - agora pode ter múltiplas configurações por tipo
+                setupRoupas = {
+                    'dia_a_dia': configs.filter(c => c.tipo === 'dia_a_dia'),
+                    'acao': configs.filter(c => c.tipo === 'acao')
+                };
                 
-                renderizarSetupRoupas();
+                await renderizarSetupRoupas();
             } catch (error) {
                 console.error('Erro ao carregar configurações:', error);
             }
@@ -8362,65 +8363,71 @@ let editingEncomendaId = null;
 
         // Renderizar configurações de roupas
         async function renderizarSetupRoupas() {
-            // Roupa Dia a Dia
-            const configDiaADia = setupRoupas['dia_a_dia'];
-            if (configDiaADia) {
-                if (configDiaADia.caminho_imagem) {
-                    document.getElementById('imagemDiaADia').src = configDiaADia.caminho_imagem;
-                    document.getElementById('imagemDiaADia').style.display = 'block';
-                    document.getElementById('placeholderDiaADia').style.display = 'none';
-                }
-                if (configDiaADia.categoria_id) {
-                    document.getElementById('categoriaDiaADia').value = configDiaADia.categoria_id;
-                }
-                if (configDiaADia.numero !== null) {
-                    document.getElementById('numeroDiaADia').value = configDiaADia.numero;
-                    // Carregar variações após definir categoria e número
-                    if (configDiaADia.categoria_id) {
-                        loadVariacoesRoupas(configDiaADia.categoria_id, 'dia_a_dia', configDiaADia.numero);
-                    }
-                }
-                if (configDiaADia.variacao_id) {
-                    document.getElementById('variacaoDiaADia').value = configDiaADia.variacao_id;
-                }
-                // Renderizar cards de categorias
-                await renderizarCardsCategorias('dia_a_dia');
+            // Roupa Dia a Dia - buscar configuração com imagem ou primeira disponível
+            const configsDiaADia = setupRoupas['dia_a_dia'] || [];
+            const configDiaADiaComImagem = Array.isArray(configsDiaADia) 
+                ? configsDiaADia.find(c => c.caminho_imagem) || configsDiaADia[0]
+                : configsDiaADia;
+            
+            if (configDiaADiaComImagem && configDiaADiaComImagem.caminho_imagem) {
+                document.getElementById('imagemDiaADia').src = configDiaADiaComImagem.caminho_imagem;
+                document.getElementById('imagemDiaADia').style.display = 'block';
+                document.getElementById('placeholderDiaADia').style.display = 'none';
             } else {
-                const container = document.getElementById('categoriasCardsDiaADia');
-                if (container) {
-                    container.innerHTML = '<p style="color: #95a5a6; font-size: 12px;">Nenhuma categoria configurada ainda</p>';
-                }
+                document.getElementById('imagemDiaADia').style.display = 'none';
+                document.getElementById('placeholderDiaADia').style.display = 'block';
             }
+            
+            // Sempre adicionar/atualizar botão de trocar imagem (sempre visível)
+            const containerDiaADia = document.getElementById('imagemDiaADiaContainer');
+            if (containerDiaADia) {
+                let btnTrocarDiaADia = containerDiaADia.querySelector('.btnTrocarImagem');
+                if (!btnTrocarDiaADia) {
+                    btnTrocarDiaADia = document.createElement('button');
+                    btnTrocarDiaADia.className = 'btn-secondary';
+                    btnTrocarDiaADia.classList.add('btnTrocarImagem');
+                    btnTrocarDiaADia.style.cssText = 'position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); z-index: 10;';
+                    containerDiaADia.appendChild(btnTrocarDiaADia);
+                }
+                btnTrocarDiaADia.textContent = configDiaADiaComImagem && configDiaADiaComImagem.caminho_imagem ? 'Trocar Imagem' : 'Adicionar Imagem';
+                btnTrocarDiaADia.onclick = () => abrirUploadRoupa('dia_a_dia');
+            }
+            
+            // Renderizar cards de categorias
+            await renderizarCardsCategorias('dia_a_dia');
 
-            // Roupa de Ação
-            const configAcao = setupRoupas['acao'];
-            if (configAcao) {
-                if (configAcao.caminho_imagem) {
-                    document.getElementById('imagemAcao').src = configAcao.caminho_imagem;
-                    document.getElementById('imagemAcao').style.display = 'block';
-                    document.getElementById('placeholderAcao').style.display = 'none';
-                }
-                if (configAcao.categoria_id) {
-                    document.getElementById('categoriaAcao').value = configAcao.categoria_id;
-                }
-                if (configAcao.numero !== null) {
-                    document.getElementById('numeroAcao').value = configAcao.numero;
-                    // Carregar variações após definir categoria e número
-                    if (configAcao.categoria_id) {
-                        loadVariacoesRoupas(configAcao.categoria_id, 'acao', configAcao.numero);
-                    }
-                }
-                if (configAcao.variacao_id) {
-                    document.getElementById('variacaoAcao').value = configAcao.variacao_id;
-                }
-                // Renderizar cards de categorias
-                await renderizarCardsCategorias('acao');
+            // Roupa de Ação - buscar configuração com imagem ou primeira disponível
+            const configsAcao = setupRoupas['acao'] || [];
+            const configAcaoComImagem = Array.isArray(configsAcao) 
+                ? configsAcao.find(c => c.caminho_imagem) || configsAcao[0]
+                : configsAcao;
+            
+            if (configAcaoComImagem && configAcaoComImagem.caminho_imagem) {
+                document.getElementById('imagemAcao').src = configAcaoComImagem.caminho_imagem;
+                document.getElementById('imagemAcao').style.display = 'block';
+                document.getElementById('placeholderAcao').style.display = 'none';
             } else {
-                const container = document.getElementById('categoriasCardsAcao');
-                if (container) {
-                    container.innerHTML = '<p style="color: #95a5a6; font-size: 12px;">Nenhuma categoria configurada ainda</p>';
-                }
+                document.getElementById('imagemAcao').style.display = 'none';
+                document.getElementById('placeholderAcao').style.display = 'block';
             }
+            
+            // Sempre adicionar/atualizar botão de trocar imagem (sempre visível)
+            const containerAcao = document.getElementById('imagemAcaoContainer');
+            if (containerAcao) {
+                let btnTrocarAcao = containerAcao.querySelector('.btnTrocarImagem');
+                if (!btnTrocarAcao) {
+                    btnTrocarAcao = document.createElement('button');
+                    btnTrocarAcao.className = 'btn-secondary';
+                    btnTrocarAcao.classList.add('btnTrocarImagem');
+                    btnTrocarAcao.style.cssText = 'position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); z-index: 10;';
+                    containerAcao.appendChild(btnTrocarAcao);
+                }
+                btnTrocarAcao.textContent = configAcaoComImagem && configAcaoComImagem.caminho_imagem ? 'Trocar Imagem' : 'Adicionar Imagem';
+                btnTrocarAcao.onclick = () => abrirUploadRoupa('acao');
+            }
+            
+            // Renderizar cards de categorias
+            await renderizarCardsCategorias('acao');
         }
 
         // Abrir modal de upload de roupa
