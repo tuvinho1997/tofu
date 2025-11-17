@@ -1269,10 +1269,10 @@ app.put('/api/encomendas/:id', authenticateToken, (req, res) => {
         const q762Anterior = row.municao_762mm || 0;
         const q12Anterior = row.municao_12cbc || 0;
 
-        const q5Novo = municao_5mm || 0;
-        const q9Novo = municao_9mm || 0;
-        const q762Novo = municao_762mm || 0;
-        const q12Novo = municao_12cbc || 0;
+        const q5Novo = parseInt(municao_5mm, 10) || 0;
+        const q9Novo = parseInt(municao_9mm, 10) || 0;
+        const q762Novo = parseInt(municao_762mm, 10) || 0;
+        const q12Novo = parseInt(municao_12cbc, 10) || 0;
 
         // Atualiza a encomenda
         db.run(
