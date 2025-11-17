@@ -1372,27 +1372,6 @@
                     </table>
                 </div>
             </div>
-            <!-- Usuários sem Membro Correspondente -->
-            <div class="content-card" id="usuariosSemMembroCard" style="display:none; margin-top:20px;">
-                <div class="card-header">
-                    <h3 class="card-title">⚠️ Usuários que Acessaram mas Não Estão em Membros</h3>
-                </div>
-                <div id="usuariosSemMembroLoading" class="loading">Carregando...</div>
-                <div id="usuariosSemMembroTable" style="display: none;">
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th>Username</th>
-                                <th>Cargo</th>
-                                <th>Último Acesso</th>
-                                <th>Total de Acessos</th>
-                            </tr>
-                        </thead>
-                        <tbody id="usuariosSemMembroTableBody">
-                        </tbody>
-                    </table>
-                </div>
-            </div>
             <!-- Solicitações Pendentes (Cadastro de Usuários) -->
             <div class="content-card" id="pendentesCard" style="display:none; margin-top:20px;">
                 <div class="card-header">
@@ -3131,8 +3110,6 @@ let editingEncomendaId = null;
                     document.getElementById('membrosTable').style.display = 'block';
                     // Carrega solicitações pendentes, se aplicável
                     loadPendentes();
-                    // Carrega usuários sem membro correspondente
-                    loadUsuariosSemMembro();
                 } else {
                     throw new Error(data.error || 'Erro ao carregar membros');
                 }
@@ -3140,66 +3117,6 @@ let editingEncomendaId = null;
                 console.error('Erro:', error);
                 document.getElementById('membrosLoading').innerHTML = `<div class="error-message">Erro ao carregar membros: ${error.message}</div>`;
             }
-        }
-
-        // Carregar usuários que acessaram mas não estão em membros
-        async function loadUsuariosSemMembro() {
-            // Apenas mostrar para cargos de alto escalão
-            if (!currentUser || !['admin','grande-mestre','mestre-dos-ventos'].includes(currentUser.role)) {
-                document.getElementById('usuariosSemMembroCard').style.display = 'none';
-                return;
-            }
-
-            document.getElementById('usuariosSemMembroLoading').style.display = 'block';
-            document.getElementById('usuariosSemMembroTable').style.display = 'none';
-
-            try {
-                const token = localStorage.getItem('authToken');
-                const response = await fetch(`${API_BASE}/usuarios/sem-membro`, {
-                    headers: {
-                        'Authorization': 'Bearer ' + token
-                    }
-                });
-                const data = await response.json();
-                
-                if (response.ok) {
-                    renderUsuariosSemMembroTable(data);
-                    document.getElementById('usuariosSemMembroLoading').style.display = 'none';
-                    document.getElementById('usuariosSemMembroTable').style.display = data.length > 0 ? 'block' : 'none';
-                    document.getElementById('usuariosSemMembroCard').style.display = data.length > 0 ? 'block' : 'none';
-                } else {
-                    document.getElementById('usuariosSemMembroLoading').innerHTML = `<div class="error-message">Erro ao carregar: ${data.error}</div>`;
-                }
-            } catch (error) {
-                console.error('Erro:', error);
-                document.getElementById('usuariosSemMembroLoading').innerHTML = `<div class="error-message">Erro ao carregar usuários sem membro</div>`;
-            }
-        }
-
-        // Renderizar tabela de usuários sem membro
-        function renderUsuariosSemMembroTable(usuarios) {
-            const tbody = document.getElementById('usuariosSemMembroTableBody');
-            if (!tbody) return;
-
-            if (usuarios.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: #95a5a6;">Nenhum usuário encontrado</td></tr>';
-                return;
-            }
-
-            tbody.innerHTML = usuarios.map(user => {
-                const ultimoAcesso = user.ultimo_acesso 
-                    ? new Date(user.ultimo_acesso).toLocaleString('pt-BR')
-                    : 'Nunca';
-                
-                return `
-                    <tr>
-                        <td><strong>${user.username || 'N/A'}</strong></td>
-                        <td>${user.role || 'membro'}</td>
-                        <td>${ultimoAcesso}</td>
-                        <td>${user.total_acessos || 0}</td>
-                    </tr>
-                `;
-            }).join('');
         }
 
         // Carregar solicitações pendentes de cadastro (usuários inativos)
