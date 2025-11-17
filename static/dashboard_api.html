@@ -756,25 +756,130 @@
                 Defina quantos materiais são consumidos para produzir cada lote (50 unidades) de munição.
             </p>
             <div class="config-municao-grid" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); gap:16px;">
-                ${['5mm','9mm','762mm','12cbc'].map(tipo => `
-                <div class="config-card" data-tipo="${tipo}" style="background:rgba(255,255,255,0.04); padding:16px; border-radius:10px; box-shadow:0 10px 25px rgba(0,0,0,0.25); border:1px solid rgba(255,255,255,0.05);">
+                <div class="config-card" data-tipo="5mm" style="background:rgba(255,255,255,0.04); padding:16px; border-radius:10px; box-shadow:0 10px 25px rgba(0,0,0,0.25); border:1px solid rgba(255,255,255,0.05);">
                     <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
                         <div style="width:56px; height:56px; background:rgba(0,0,0,0.2); border-radius:8px; display:flex; align-items:center; justify-content:center;">
-                            <img id="cfg-img-${tipo}" src="/static/images/items/default.jpg" alt="${tipo}" style="width:48px; height:48px; object-fit:contain;">
+                            <img id="cfg-img-5mm" src="/static/images/items/default.jpg" alt="5mm" style="width:48px; height:48px; object-fit:contain;">
                         </div>
                         <div>
-                            <h4 style="margin:0; font-size:18px;">${tipo}</h4>
+                            <h4 style="margin:0; font-size:18px;">5mm</h4>
                             <small style="color:#bdc3c7;">Consumo por lote de 50</small>
                         </div>
                     </div>
-                    ${['Alumínio','Cobre','Emb Plástica','Ferro','Titânio'].map(campo => `
                     <label style="display:block; font-size:13px; color:#bdc3c7; margin-bottom:6px;">
-                        ${campo}
-                        <input type="number" min="0" id="cfg-${tipo}-${campo.toLowerCase().replace(' ', '_')}" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.25); color:#ecf0f1; margin-top:4px;">
+                        Alumínio
+                        <input type="number" min="0" id="cfg-5mm-aluminio" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.25); color:#ecf0f1; margin-top:4px;">
                     </label>
-                    `).join('')}
+                    <label style="display:block; font-size:13px; color:#bdc3c7; margin-bottom:6px;">
+                        Cobre
+                        <input type="number" min="0" id="cfg-5mm-cobre" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.25); color:#ecf0f1; margin-top:4px;">
+                    </label>
+                    <label style="display:block; font-size:13px; color:#bdc3c7; margin-bottom:6px;">
+                        Emb Plástica
+                        <input type="number" min="0" id="cfg-5mm-emb_plastica" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.25); color:#ecf0f1; margin-top:4px;">
+                    </label>
+                    <label style="display:block; font-size:13px; color:#bdc3c7; margin-bottom:6px;">
+                        Ferro
+                        <input type="number" min="0" id="cfg-5mm-ferro" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.25); color:#ecf0f1; margin-top:4px;">
+                    </label>
+                    <label style="display:block; font-size:13px; color:#bdc3c7; margin-bottom:6px;">
+                        Titânio
+                        <input type="number" min="0" id="cfg-5mm-titanio" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.25); color:#ecf0f1; margin-top:4px;">
+                    </label>
                 </div>
-                `).join('')}
+                <div class="config-card" data-tipo="9mm" style="background:rgba(255,255,255,0.04); padding:16px; border-radius:10px; box-shadow:0 10px 25px rgba(0,0,0,0.25); border:1px solid rgba(255,255,255,0.05);">
+                    <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+                        <div style="width:56px; height:56px; background:rgba(0,0,0,0.2); border-radius:8px; display:flex; align-items:center; justify-content:center;">
+                            <img id="cfg-img-9mm" src="/static/images/items/default.jpg" alt="9mm" style="width:48px; height:48px; object-fit:contain;">
+                        </div>
+                        <div>
+                            <h4 style="margin:0; font-size:18px;">9mm</h4>
+                            <small style="color:#bdc3c7;">Consumo por lote de 50</small>
+                        </div>
+                    </div>
+                    <label style="display:block; font-size:13px; color:#bdc3c7; margin-bottom:6px;">
+                        Alumínio
+                        <input type="number" min="0" id="cfg-9mm-aluminio" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.25); color:#ecf0f1; margin-top:4px;">
+                    </label>
+                    <label style="display:block; font-size:13px; color:#bdc3c7; margin-bottom:6px;">
+                        Cobre
+                        <input type="number" min="0" id="cfg-9mm-cobre" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.25); color:#ecf0f1; margin-top:4px;">
+                    </label>
+                    <label style="display:block; font-size:13px; color:#bdc3c7; margin-bottom:6px;">
+                        Emb Plástica
+                        <input type="number" min="0" id="cfg-9mm-emb_plastica" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.25); color:#ecf0f1; margin-top:4px;">
+                    </label>
+                    <label style="display:block; font-size:13px; color:#bdc3c7; margin-bottom:6px;">
+                        Ferro
+                        <input type="number" min="0" id="cfg-9mm-ferro" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.25); color:#ecf0f1; margin-top:4px;">
+                    </label>
+                    <label style="display:block; font-size:13px; color:#bdc3c7; margin-bottom:6px;">
+                        Titânio
+                        <input type="number" min="0" id="cfg-9mm-titanio" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.25); color:#ecf0f1; margin-top:4px;">
+                    </label>
+                </div>
+                <div class="config-card" data-tipo="762mm" style="background:rgba(255,255,255,0.04); padding:16px; border-radius:10px; box-shadow:0 10px 25px rgba(0,0,0,0.25); border:1px solid rgba(255,255,255,0.05);">
+                    <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+                        <div style="width:56px; height:56px; background:rgba(0,0,0,0.2); border-radius:8px; display:flex; align-items:center; justify-content:center;">
+                            <img id="cfg-img-762mm" src="/static/images/items/default.jpg" alt="762mm" style="width:48px; height:48px; object-fit:contain;">
+                        </div>
+                        <div>
+                            <h4 style="margin:0; font-size:18px;">762mm</h4>
+                            <small style="color:#bdc3c7;">Consumo por lote de 50</small>
+                        </div>
+                    </div>
+                    <label style="display:block; font-size:13px; color:#bdc3c7; margin-bottom:6px;">
+                        Alumínio
+                        <input type="number" min="0" id="cfg-762mm-aluminio" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.25); color:#ecf0f1; margin-top:4px;">
+                    </label>
+                    <label style="display:block; font-size:13px; color:#bdc3c7; margin-bottom:6px;">
+                        Cobre
+                        <input type="number" min="0" id="cfg-762mm-cobre" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.25); color:#ecf0f1; margin-top:4px;">
+                    </label>
+                    <label style="display:block; font-size:13px; color:#bdc3c7; margin-bottom:6px;">
+                        Emb Plástica
+                        <input type="number" min="0" id="cfg-762mm-emb_plastica" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.25); color:#ecf0f1; margin-top:4px;">
+                    </label>
+                    <label style="display:block; font-size:13px; color:#bdc3c7; margin-bottom:6px;">
+                        Ferro
+                        <input type="number" min="0" id="cfg-762mm-ferro" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.25); color:#ecf0f1; margin-top:4px;">
+                    </label>
+                    <label style="display:block; font-size:13px; color:#bdc3c7; margin-bottom:6px;">
+                        Titânio
+                        <input type="number" min="0" id="cfg-762mm-titanio" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.25); color:#ecf0f1; margin-top:4px;">
+                    </label>
+                </div>
+                <div class="config-card" data-tipo="12cbc" style="background:rgba(255,255,255,0.04); padding:16px; border-radius:10px; box-shadow:0 10px 25px rgba(0,0,0,0.25); border:1px solid rgba(255,255,255,0.05);">
+                    <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+                        <div style="width:56px; height:56px; background:rgba(0,0,0,0.2); border-radius:8px; display:flex; align-items:center; justify-content:center;">
+                            <img id="cfg-img-12cbc" src="/static/images/items/default.jpg" alt="12cbc" style="width:48px; height:48px; object-fit:contain;">
+                        </div>
+                        <div>
+                            <h4 style="margin:0; font-size:18px;">12cbc</h4>
+                            <small style="color:#bdc3c7;">Consumo por lote de 50</small>
+                        </div>
+                    </div>
+                    <label style="display:block; font-size:13px; color:#bdc3c7; margin-bottom:6px;">
+                        Alumínio
+                        <input type="number" min="0" id="cfg-12cbc-aluminio" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.25); color:#ecf0f1; margin-top:4px;">
+                    </label>
+                    <label style="display:block; font-size:13px; color:#bdc3c7; margin-bottom:6px;">
+                        Cobre
+                        <input type="number" min="0" id="cfg-12cbc-cobre" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.25); color:#ecf0f1; margin-top:4px;">
+                    </label>
+                    <label style="display:block; font-size:13px; color:#bdc3c7; margin-bottom:6px;">
+                        Emb Plástica
+                        <input type="number" min="0" id="cfg-12cbc-emb_plastica" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.25); color:#ecf0f1; margin-top:4px;">
+                    </label>
+                    <label style="display:block; font-size:13px; color:#bdc3c7; margin-bottom:6px;">
+                        Ferro
+                        <input type="number" min="0" id="cfg-12cbc-ferro" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.25); color:#ecf0f1; margin-top:4px;">
+                    </label>
+                    <label style="display:block; font-size:13px; color:#bdc3c7; margin-bottom:6px;">
+                        Titânio
+                        <input type="number" min="0" id="cfg-12cbc-titanio" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.25); color:#ecf0f1; margin-top:4px;">
+                    </label>
+                </div>
             </div>
             <div class="form-actions" style="margin-top:20px; text-align:right;">
                 <button type="button" class="btn-secondary" onclick="closeModal('configMateriaisMunicaoModal')">Cancelar</button>
@@ -3924,6 +4029,10 @@ let editingEncomendaId = null;
                         input.value = cfg[campo] != null ? cfg[campo] : '';
                     }
                 });
+                const img = document.getElementById(`cfg-img-${tipo}`);
+                if (img && typeof getItemImagePath === 'function') {
+                    img.src = getItemImagePath(tipo);
+                }
             });
         }
 
