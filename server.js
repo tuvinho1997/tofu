@@ -1810,8 +1810,8 @@ app.get('/api/config/commission-rate', (req, res) => {
 // Atualiza a taxa de comissão. Somente administradores ou líderes podem definir o percentual.
 app.put('/api/config/commission-rate', authenticateToken, (req, res) => {
     const role = req.user && req.user.role;
-    // Apenas administradores, Grande Mestres ou Mestres dos Ventos podem alterar a taxa de comissão
-    if (!['admin', 'grande-mestre', 'mestre-dos-ventos'].includes(role)) {
+    // Apenas administradores ou o cargo mais alto (Grande Mestre) podem alterar a taxa de comissão
+    if (!['admin', 'grande-mestre'].includes(role)) {
         return res.status(403).json({ error: 'Acesso negado' });
     }
     const { rate } = req.body;
