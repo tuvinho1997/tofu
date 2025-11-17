@@ -969,9 +969,14 @@
         <form id="novaVariacaoForm">
             <div class="form-group">
                 <label>Categoria *</label>
-                <select id="variacaoCategoria" required>
+                <select id="variacaoCategoria" required onchange="atualizarNumeroVariacao()">
                     <option value="">Selecione uma categoria...</option>
                 </select>
+            </div>
+            <div class="form-group">
+                <label>Número *</label>
+                <input type="number" id="variacaoNumero" min="0" required placeholder="Número da categoria">
+                <small style="color: #bdc3c7; display: block; margin-top: 5px;">O número deve corresponder ao número configurado na categoria</small>
             </div>
             <div class="form-group">
                 <label>Nome da Variação (Cor) *</label>
@@ -6090,10 +6095,11 @@ let editingEncomendaId = null;
                 e.preventDefault();
                 
                 const categoriaId = document.getElementById('variacaoCategoria').value;
+                const numero = document.getElementById('variacaoNumero').value;
                 const nome = document.getElementById('variacaoNome').value.trim();
                 const tipoRoupa = document.getElementById('variacaoTipoRoupa').value;
                 
-                if (!categoriaId || !nome) {
+                if (!categoriaId || !numero || !nome) {
                     alert('Por favor, preencha todos os campos');
                     return;
                 }
@@ -6106,7 +6112,7 @@ let editingEncomendaId = null;
                             'Content-Type': 'application/json',
                             'Authorization': `Bearer ${token}`
                         },
-                        body: JSON.stringify({ nome, categoria_id: categoriaId })
+                        body: JSON.stringify({ nome, categoria_id: categoriaId, numero: parseInt(numero) })
                     });
                     
                     const data = await response.json();
@@ -6118,7 +6124,7 @@ let editingEncomendaId = null;
                     alert('Variação criada com sucesso!');
                     closeModal('novaVariacaoModal');
                     novaVariacaoForm.reset();
-                    await loadVariacoesRoupas(categoriaId, tipoRoupa);
+                    await loadVariacoesRoupas(categoriaId, tipoRoupa, numero);
                 } catch (error) {
                     alert('Erro ao criar variação: ' + error.message);
                 }
@@ -6185,7 +6191,8 @@ let editingEncomendaId = null;
             if (categoriaDiaADia) {
                 categoriaDiaADia.removeEventListener('change', categoriaDiaADia._changeHandler);
                 categoriaDiaADia._changeHandler = function() {
-                    loadVariacoesRoupas(this.value, 'dia_a_dia');
+                    const numero = document.getElementById('numeroDiaADia').value;
+                    loadVariacoesRoupas(this.value, 'dia_a_dia', numero);
                 };
                 categoriaDiaADia.addEventListener('change', categoriaDiaADia._changeHandler);
             }
@@ -6193,9 +6200,36 @@ let editingEncomendaId = null;
             if (categoriaAcao) {
                 categoriaAcao.removeEventListener('change', categoriaAcao._changeHandler);
                 categoriaAcao._changeHandler = function() {
-                    loadVariacoesRoupas(this.value, 'acao');
+                    const numero = document.getElementById('numeroAcao').value;
+                    loadVariacoesRoupas(this.value, 'acao', numero);
                 };
                 categoriaAcao.addEventListener('change', categoriaAcao._changeHandler);
+            }
+            
+            // Event listeners para mudança de número (recarregar variações)
+            const numeroDiaADia = document.getElementById('numeroDiaADia');
+            const numeroAcao = document.getElementById('numeroAcao');
+            
+            if (numeroDiaADia) {
+                numeroDiaADia.removeEventListener('change', numeroDiaADia._changeHandler);
+                numeroDiaADia._changeHandler = function() {
+                    const categoriaId = document.getElementById('categoriaDiaADia').value;
+                    if (categoriaId) {
+                        loadVariacoesRoupas(categoriaId, 'dia_a_dia', this.value);
+                    }
+                };
+                numeroDiaADia.addEventListener('change', numeroDiaADia._changeHandler);
+            }
+            
+            if (numeroAcao) {
+                numeroAcao.removeEventListener('change', numeroAcao._changeHandler);
+                numeroAcao._changeHandler = function() {
+                    const categoriaId = document.getElementById('categoriaAcao').value;
+                    if (categoriaId) {
+                        loadVariacoesRoupas(categoriaId, 'acao', this.value);
+                    }
+                };
+                numeroAcao.addEventListener('change', numeroAcao._changeHandler);
             }
         }
 
@@ -7999,8 +8033,8 @@ let editingEncomendaId = null;
             });
         }
 
-        // Carregar variações de roupas para uma categoria
-        async function loadVariacoesRoupas(categoriaId, tipoRoupa) {
+        // Carregar variações de roupas para uma categoria e número
+        async function loadVariacoesRoupas(categoriaId, tipoRoupa, numero) {
             if (!categoriaId) {
                 const selectId = tipoRoupa === 'dia_a_dia' ? 'variacaoDiaADia' : 'variacaoAcao';
                 const select = document.getElementById(selectId);
@@ -8010,9 +8044,18 @@ let editingEncomendaId = null;
                 return;
             }
             
+            if (!numero || numero === '') {
+                const selectId = tipoRoupa === 'dia_a_dia' ? 'variacaoDiaADia' : 'variacaoAcao';
+                const select = document.getElementById(selectId);
+                if (select) {
+                    select.innerHTML = '<option value="">Nenhuma variação (defina o número primeiro)</option>';
+                }
+                return;
+            }
+            
             try {
                 const token = localStorage.getItem('authToken');
-                const response = await fetch(`${API_BASE}/variacoes-roupas?categoria_id=${categoriaId}`, {
+                const response = await fetch(`${API_BASE}/variacoes-roupas?categoria_id=${categoriaId}&numero=${numero}`, {
                     headers: {
                         'Authorization': `Bearer ${token}`
                     }
@@ -8043,6 +8086,25 @@ let editingEncomendaId = null;
                 }
             } catch (error) {
                 console.error('Erro ao carregar variações:', error);
+            }
+        }
+
+        // Atualizar número no modal de variação baseado na categoria selecionada
+        function atualizarNumeroVariacao() {
+            const categoriaId = document.getElementById('variacaoCategoria').value;
+            const tipoRoupa = document.getElementById('variacaoTipoRoupa').value;
+            
+            if (!categoriaId || !tipoRoupa) {
+                document.getElementById('variacaoNumero').value = '';
+                return;
+            }
+            
+            // Buscar o número configurado para essa categoria no tipo de roupa
+            const config = setupRoupas[tipoRoupa];
+            if (config && config.categoria_id == categoriaId && config.numero) {
+                document.getElementById('variacaoNumero').value = config.numero;
+            } else {
+                document.getElementById('variacaoNumero').value = '';
             }
         }
 
@@ -8085,10 +8147,13 @@ let editingEncomendaId = null;
                 }
                 if (configDiaADia.categoria_id) {
                     document.getElementById('categoriaDiaADia').value = configDiaADia.categoria_id;
-                    loadVariacoesRoupas(configDiaADia.categoria_id, 'dia_a_dia');
                 }
                 if (configDiaADia.numero !== null) {
                     document.getElementById('numeroDiaADia').value = configDiaADia.numero;
+                    // Carregar variações após definir categoria e número
+                    if (configDiaADia.categoria_id) {
+                        loadVariacoesRoupas(configDiaADia.categoria_id, 'dia_a_dia', configDiaADia.numero);
+                    }
                 }
                 if (configDiaADia.variacao_id) {
                     document.getElementById('variacaoDiaADia').value = configDiaADia.variacao_id;
@@ -8105,10 +8170,13 @@ let editingEncomendaId = null;
                 }
                 if (configAcao.categoria_id) {
                     document.getElementById('categoriaAcao').value = configAcao.categoria_id;
-                    loadVariacoesRoupas(configAcao.categoria_id, 'acao');
                 }
                 if (configAcao.numero !== null) {
                     document.getElementById('numeroAcao').value = configAcao.numero;
+                    // Carregar variações após definir categoria e número
+                    if (configAcao.categoria_id) {
+                        loadVariacoesRoupas(configAcao.categoria_id, 'acao', configAcao.numero);
+                    }
                 }
                 if (configAcao.variacao_id) {
                     document.getElementById('variacaoAcao').value = configAcao.variacao_id;
@@ -8125,6 +8193,18 @@ let editingEncomendaId = null;
         // Abrir modal de nova variação
         function abrirNovaVariacao(tipo) {
             document.getElementById('variacaoTipoRoupa').value = tipo;
+            
+            // Preencher categoria e número baseado na configuração atual
+            const categoriaId = document.getElementById(`categoria${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).value;
+            const numero = document.getElementById(`numero${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).value;
+            
+            if (categoriaId) {
+                document.getElementById('variacaoCategoria').value = categoriaId;
+            }
+            if (numero) {
+                document.getElementById('variacaoNumero').value = numero;
+            }
+            
             openModal('novaVariacaoModal');
         }
 
