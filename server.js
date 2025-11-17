@@ -977,9 +977,23 @@ app.post('/api/login', (req, res) => {
         }
 
         // Verificar se o usuário tem correspondência na tabela membros
-        // Admin e altos cargos sempre podem acessar
-        if (['admin', 'grande-mestre', 'mestre-dos-ventos'].includes(user.role)) {
-            // Permitir acesso para admin e altos cargos
+        // Tofu (admin) sempre pode acessar
+        if (user.username.toLowerCase() === 'tofu' && user.role === 'admin') {
+            // Permitir acesso para tofu (admin)
+            continuarLogin();
+        } else if (['admin', 'grande-mestre', 'mestre-dos-ventos'].includes(user.role)) {
+            // Para outros admin e altos cargos, verificar se existe membro correspondente
+            verificarMembroCorrespondente(user.username, (temMembro) => {
+                if (!temMembro) {
+                    return res.status(403).json({ 
+                        error: 'Acesso negado. Você precisa estar cadastrado na lista de membros para acessar o sistema.' 
+                    });
+                }
+                
+                // Usuário tem membro correspondente, prosseguir com login
+                continuarLogin();
+            });
+            return; // Retornar aqui para não continuar o código abaixo
         } else {
             // Para outros usuários, verificar se existe membro correspondente
             verificarMembroCorrespondente(user.username, (temMembro) => {
@@ -994,9 +1008,6 @@ app.post('/api/login', (req, res) => {
             });
             return; // Retornar aqui para não continuar o código abaixo
         }
-        
-        // Continuar com login para admin/altos cargos ou após verificação de membro
-        continuarLogin();
         
         function continuarLogin() {
 
@@ -1054,10 +1065,23 @@ app.post('/api/auth/login', (req, res) => {
         }
         
         // Verificar se o usuário tem correspondência na tabela membros
-        // Admin e altos cargos sempre podem acessar
-        if (['admin', 'grande-mestre', 'mestre-dos-ventos'].includes(user.role)) {
-            // Permitir acesso para admin e altos cargos
+        // Tofu (admin) sempre pode acessar
+        if (user.username.toLowerCase() === 'tofu' && user.role === 'admin') {
+            // Permitir acesso para tofu (admin)
             continuarLogin();
+        } else if (['admin', 'grande-mestre', 'mestre-dos-ventos'].includes(user.role)) {
+            // Para outros admin e altos cargos, verificar se existe membro correspondente
+            verificarMembroCorrespondente(user.username, (temMembro) => {
+                if (!temMembro) {
+                    return res.status(403).json({ 
+                        error: 'Acesso negado. Você precisa estar cadastrado na lista de membros para acessar o sistema.' 
+                    });
+                }
+                
+                // Usuário tem membro correspondente, prosseguir com login
+                continuarLogin();
+            });
+            return; // Retornar aqui para não continuar o código abaixo
         } else {
             // Para outros usuários, verificar se existe membro correspondente
             verificarMembroCorrespondente(user.username, (temMembro) => {
