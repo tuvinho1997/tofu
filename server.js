@@ -2513,20 +2513,19 @@ app.put('/api/membros/:id', authenticateToken, (req, res) => {
                             return res.status(500).json({ error: 'Erro ao verificar username: ' + errCheck.message });
                         }
                         if (existingUser) {
-                            // Verificar se esse usuário tem membro correspondente
+                            // Verificar se esse usuário tem membro correspondente através do user_id (relação direta)
                             db.get(`
                                 SELECT 1 FROM membros m 
-                                WHERE LOWER(TRIM(m.nome)) = LOWER(TRIM(?))
-                                OR m.nome LIKE ?
-                            `, [usernameTrim, `%${usernameTrim}%`], (errMembroCheck, membroCheck) => {
+                                WHERE m.user_id = ?
+                            `, [existingUser.id], (errMembroCheck, membroCheck) => {
                                 if (errMembroCheck) {
                                     return res.status(500).json({ error: 'Erro ao verificar membro: ' + errMembroCheck.message });
                                 }
-                                // Se tem membro correspondente, o username está em uso
+                                // Se tem membro correspondente através de user_id, o username está em uso
                                 if (membroCheck) {
                                     return res.status(400).json({ error: 'Username já está em uso por outro membro ativo' });
                                 }
-                                // Se não tem membro, é usuário órfão - pode remover e reutilizar
+                                // Se não tem membro correspondente, é usuário órfão - pode remover e reutilizar
                                 db.run('DELETE FROM usuarios WHERE id = ?', [existingUser.id], (delErr) => {
                                     if (delErr) {
                                         return res.status(500).json({ error: 'Erro ao remover usuário órfão: ' + delErr.message });
