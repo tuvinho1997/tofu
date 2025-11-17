@@ -918,6 +918,96 @@
     </div>
 </div>
 
+<!-- Modal Upload Mapa -->
+<div id="uploadMapaModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 class="modal-title">Upload Mapa da Facção</h3>
+            <button class="close-btn" onclick="closeModal('uploadMapaModal')">&times;</button>
+        </div>
+        <form id="uploadMapaForm" enctype="multipart/form-data">
+            <div class="form-group">
+                <label>Imagem do Mapa *</label>
+                <input type="file" id="mapaArquivo" accept="image/*" required>
+                <small style="color: #bdc3c7; display: block; margin-top: 5px;">Apenas uma imagem será mantida. Uploads subsequentes substituirão a anterior.</small>
+            </div>
+            <div style="display: flex; gap: 10px; margin-top: 20px;">
+                <button type="button" class="btn-secondary" onclick="closeModal('uploadMapaModal')">Cancelar</button>
+                <button type="submit" class="btn-primary">Upload Mapa</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal Nova Categoria -->
+<div id="novaCategoriaModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 class="modal-title">Nova Categoria de Roupa</h3>
+            <button class="close-btn" onclick="closeModal('novaCategoriaModal')">&times;</button>
+        </div>
+        <form id="novaCategoriaForm">
+            <div class="form-group">
+                <label>Nome da Categoria *</label>
+                <input type="text" id="categoriaNome" required placeholder="Ex: Calça, Camiseta, Jaqueta">
+            </div>
+            <div style="display: flex; gap: 10px; margin-top: 20px;">
+                <button type="button" class="btn-secondary" onclick="closeModal('novaCategoriaModal')">Cancelar</button>
+                <button type="submit" class="btn-primary">Criar Categoria</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal Nova Variação -->
+<div id="novaVariacaoModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 class="modal-title">Nova Variação de Roupa</h3>
+            <button class="close-btn" onclick="closeModal('novaVariacaoModal')">&times;</button>
+        </div>
+        <form id="novaVariacaoForm">
+            <div class="form-group">
+                <label>Categoria *</label>
+                <select id="variacaoCategoria" required>
+                    <option value="">Selecione uma categoria...</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Nome da Variação (Cor) *</label>
+                <input type="text" id="variacaoNome" required placeholder="Ex: Preto, Azul, Vermelho">
+            </div>
+            <input type="hidden" id="variacaoTipoRoupa" value="">
+            <div style="display: flex; gap: 10px; margin-top: 20px;">
+                <button type="button" class="btn-secondary" onclick="closeModal('novaVariacaoModal')">Cancelar</button>
+                <button type="submit" class="btn-primary">Criar Variação</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal Upload Roupa -->
+<div id="uploadRoupaModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 class="modal-title">Upload Imagem da Roupa</h3>
+            <button class="close-btn" onclick="closeModal('uploadRoupaModal')">&times;</button>
+        </div>
+        <form id="uploadRoupaForm" enctype="multipart/form-data">
+            <div class="form-group">
+                <label>Imagem da Roupa *</label>
+                <input type="file" id="roupaArquivo" accept="image/*" required>
+                <small style="color: #bdc3c7; display: block; margin-top: 5px;">A imagem será redimensionada para manter proporção.</small>
+            </div>
+            <input type="hidden" id="uploadRoupaTipo" value="">
+            <div style="display: flex; gap: 10px; margin-top: 20px;">
+                <button type="button" class="btn-secondary" onclick="closeModal('uploadRoupaModal')">Cancelar</button>
+                <button type="submit" class="btn-primary">Upload Imagem</button>
+            </div>
+        </form>
+    </div>
+</div>
+
     <div class="nav-tabs">
         <button class="nav-tab active" onclick="showTab('dashboard')">Dashboard</button>
         <button class="nav-tab" onclick="showTab('membros')">Membros</button>
@@ -927,6 +1017,8 @@
         <button class="nav-tab" onclick="showTab('inventarioFamilia')">Inventário Família</button>
         <button class="nav-tab" onclick="showTab('relatorios')">Relatórios</button>
         <button class="nav-tab" onclick="showTab('areaEducativa')">Área Educativa</button>
+        <button class="nav-tab" onclick="showTab('localizacaoFaccao')">Localização Facção</button>
+        <button class="nav-tab" onclick="showTab('setup')">Setup</button>
         <!-- Organograma tab: visível apenas para admin, líder ou vice-líder -->
         <button class="nav-tab" id="navOrganograma" onclick="showTab('organograma')" style="display: none;">Organograma</button>
     </div>
@@ -1624,6 +1716,122 @@
                             <video id="videoPlayer" controls style="max-width: 100%; max-height: 70vh; border-radius: 8px; background: #1a1a1a;">
                                 Seu navegador não suporta a tag de vídeo.
                             </video>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Localização Facção Tab -->
+        <div id="localizacaoFaccao" class="tab-content" style="display: none;">
+            <div class="content-card">
+                <div class="card-header">
+                    <h3 class="card-title">📍 Localização Facção</h3>
+                    <button class="btn-primary" id="btnUploadMapa" onclick="openModal('uploadMapaModal')" style="display: none;">Atualizar Mapa</button>
+                </div>
+                
+                <div id="mapaLoading" class="loading">Carregando mapa...</div>
+                
+                <div id="mapaContainer" style="display: none; text-align: center; margin-top: 20px;">
+                    <div id="mapaDisplay" style="max-width: 100%; display: inline-block;">
+                        <img id="mapaImagem" src="" alt="Mapa da Facção" style="max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">
+                    </div>
+                    <div id="mapaInfo" style="margin-top: 15px; color: #95a5a6; font-size: 14px;"></div>
+                </div>
+                
+                <div id="mapaVazio" style="display: none; text-align: center; padding: 60px 20px; color: #95a5a6;">
+                    <p style="font-size: 18px; margin-bottom: 10px;">Nenhum mapa cadastrado ainda</p>
+                    <p style="font-size: 14px;">Faça upload de uma imagem do mapa da facção</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Setup Tab -->
+        <div id="setup" class="tab-content" style="display: none;">
+            <div class="content-card">
+                <div class="card-header">
+                    <h3 class="card-title">⚙️ Setup da Facção</h3>
+                    <button class="btn-primary" id="btnNovaCategoria" onclick="openModal('novaCategoriaModal')">+ Nova Categoria</button>
+                </div>
+                
+                <div id="setupLoading" class="loading">Carregando configurações...</div>
+                
+                <div id="setupContainer" style="display: none;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-top: 20px;">
+                        <!-- Roupa Dia a Dia -->
+                        <div style="background: rgba(255,255,255,0.05); border-radius: 10px; padding: 20px; border: 1px solid rgba(255,255,255,0.1);">
+                            <h4 style="margin: 0 0 20px 0; color: #ecf0f1; font-size: 18px;">👔 Roupa Dia a Dia</h4>
+                            <div id="roupaDiaADia" style="display: flex; gap: 20px; align-items: flex-start;">
+                                <div style="flex: 0 0 300px;">
+                                    <div id="imagemDiaADiaContainer" style="width: 300px; height: 400px; background: #1a1a1a; border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-bottom: 15px; position: relative; overflow: hidden;">
+                                        <img id="imagemDiaADia" src="" alt="Roupa Dia a Dia" style="max-width: 100%; max-height: 100%; object-fit: contain; display: none;">
+                                        <div id="placeholderDiaADia" style="color: #7f8c8d; text-align: center;">
+                                            <p>Nenhuma imagem</p>
+                                            <button class="btn-secondary" onclick="abrirUploadRoupa('dia_a_dia')" style="margin-top: 10px;">Adicionar Imagem</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div style="flex: 1;">
+                                    <form id="formDiaADia" onsubmit="salvarRoupa(event, 'dia_a_dia')">
+                                        <div class="form-group">
+                                            <label>Categoria</label>
+                                            <select id="categoriaDiaADia" required>
+                                                <option value="">Selecione uma categoria...</option>
+                                            </select>
+                                        </div>
+                                        <div class="form-group">
+                                            <label>Número</label>
+                                            <input type="number" id="numeroDiaADia" min="0" placeholder="Apenas admin e altos cargos">
+                                        </div>
+                                        <div class="form-group">
+                                            <label>Variação (opcional)</label>
+                                            <select id="variacaoDiaADia">
+                                                <option value="">Nenhuma variação</option>
+                                            </select>
+                                            <button type="button" class="btn-secondary" onclick="abrirNovaVariacao('dia_a_dia')" style="margin-top: 5px; font-size: 12px;">+ Nova Variação</button>
+                                        </div>
+                                        <button type="submit" class="btn-primary">Salvar Configuração</button>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Roupa de Ação -->
+                        <div style="background: rgba(255,255,255,0.05); border-radius: 10px; padding: 20px; border: 1px solid rgba(255,255,255,0.1);">
+                            <h4 style="margin: 0 0 20px 0; color: #ecf0f1; font-size: 18px;">🎯 Roupa de Ação</h4>
+                            <div id="roupaAcao" style="display: flex; gap: 20px; align-items: flex-start;">
+                                <div style="flex: 0 0 300px;">
+                                    <div id="imagemAcaoContainer" style="width: 300px; height: 400px; background: #1a1a1a; border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-bottom: 15px; position: relative; overflow: hidden;">
+                                        <img id="imagemAcao" src="" alt="Roupa de Ação" style="max-width: 100%; max-height: 100%; object-fit: contain; display: none;">
+                                        <div id="placeholderAcao" style="color: #7f8c8d; text-align: center;">
+                                            <p>Nenhuma imagem</p>
+                                            <button class="btn-secondary" onclick="abrirUploadRoupa('acao')" style="margin-top: 10px;">Adicionar Imagem</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div style="flex: 1;">
+                                    <form id="formAcao" onsubmit="salvarRoupa(event, 'acao')">
+                                        <div class="form-group">
+                                            <label>Categoria</label>
+                                            <select id="categoriaAcao" required>
+                                                <option value="">Selecione uma categoria...</option>
+                                            </select>
+                                        </div>
+                                        <div class="form-group">
+                                            <label>Número</label>
+                                            <input type="number" id="numeroAcao" min="0" placeholder="Apenas admin e altos cargos">
+                                        </div>
+                                        <div class="form-group">
+                                            <label>Variação (opcional)</label>
+                                            <select id="variacaoAcao">
+                                                <option value="">Nenhuma variação</option>
+                                            </select>
+                                            <button type="button" class="btn-secondary" onclick="abrirNovaVariacao('acao')" style="margin-top: 5px; font-size: 12px;">+ Nova Variação</button>
+                                        </div>
+                                        <button type="submit" class="btn-primary">Salvar Configuração</button>
+                                    </form>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -2372,6 +2580,26 @@ let editingEncomendaId = null;
                     }
                 }
 
+                // Exibe o botão de upload de mapa apenas para admin e altos cargos
+                const btnUploadMapa = document.getElementById('btnUploadMapa');
+                if (btnUploadMapa) {
+                    if (['admin','grande-mestre','mestre-dos-ventos'].includes(user.role)) {
+                        btnUploadMapa.style.display = 'inline-block';
+                    } else {
+                        btnUploadMapa.style.display = 'none';
+                    }
+                }
+
+                // Controla campos de número (apenas admin e altos cargos podem editar)
+                const numeroDiaADia = document.getElementById('numeroDiaADia');
+                const numeroAcao = document.getElementById('numeroAcao');
+                if (numeroDiaADia) {
+                    numeroDiaADia.disabled = !['admin','grande-mestre','mestre-dos-ventos'].includes(user.role);
+                }
+                if (numeroAcao) {
+                    numeroAcao.disabled = !['admin','grande-mestre','mestre-dos-ventos'].includes(user.role);
+                }
+
                 const encomendaStatusSelect = document.getElementById('encomendaStatus');
                 if (encomendaStatusSelect) {
                     if (['admin','grande-mestre','mestre-dos-ventos'].includes(user.role)) {
@@ -2735,6 +2963,12 @@ let editingEncomendaId = null;
                     break;
                 case 'areaEducativa':
                     loadVideosEducativos();
+                    break;
+                case 'localizacaoFaccao':
+                    loadMapaFaccao();
+                    break;
+                case 'setup':
+                    loadSetup();
                     break;
             }
         }
@@ -5769,6 +6003,202 @@ let editingEncomendaId = null;
             });
         }
 
+        // Event listener para formulário de upload de mapa
+        const uploadMapaForm = document.getElementById('uploadMapaForm');
+        if (uploadMapaForm) {
+            uploadMapaForm.addEventListener('submit', async function(e) {
+                e.preventDefault();
+                
+                const mapaArquivo = document.getElementById('mapaArquivo').files[0];
+                if (!mapaArquivo) {
+                    alert('Por favor, selecione uma imagem do mapa');
+                    return;
+                }
+                
+                try {
+                    const formData = new FormData();
+                    formData.append('mapa', mapaArquivo);
+                    
+                    const token = localStorage.getItem('authToken');
+                    const response = await fetch(`${API_BASE}/mapa-faccao`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${token}`
+                        },
+                        body: formData
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (!response.ok) {
+                        throw new Error(data.error || 'Erro ao fazer upload do mapa');
+                    }
+                    
+                    alert('Mapa atualizado com sucesso!');
+                    closeModal('uploadMapaModal');
+                    uploadMapaForm.reset();
+                    loadMapaFaccao();
+                } catch (error) {
+                    alert('Erro ao fazer upload do mapa: ' + error.message);
+                }
+            });
+        }
+
+        // Event listener para formulário de nova categoria
+        const novaCategoriaForm = document.getElementById('novaCategoriaForm');
+        if (novaCategoriaForm) {
+            novaCategoriaForm.addEventListener('submit', async function(e) {
+                e.preventDefault();
+                
+                const nome = document.getElementById('categoriaNome').value.trim();
+                if (!nome) {
+                    alert('Por favor, informe o nome da categoria');
+                    return;
+                }
+                
+                try {
+                    const token = localStorage.getItem('authToken');
+                    const response = await fetch(`${API_BASE}/categorias-roupas`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`
+                        },
+                        body: JSON.stringify({ nome })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (!response.ok) {
+                        throw new Error(data.error || 'Erro ao criar categoria');
+                    }
+                    
+                    alert('Categoria criada com sucesso!');
+                    closeModal('novaCategoriaModal');
+                    novaCategoriaForm.reset();
+                    await loadCategoriasRoupas();
+                } catch (error) {
+                    alert('Erro ao criar categoria: ' + error.message);
+                }
+            });
+        }
+
+        // Event listener para formulário de nova variação
+        const novaVariacaoForm = document.getElementById('novaVariacaoForm');
+        if (novaVariacaoForm) {
+            novaVariacaoForm.addEventListener('submit', async function(e) {
+                e.preventDefault();
+                
+                const categoriaId = document.getElementById('variacaoCategoria').value;
+                const nome = document.getElementById('variacaoNome').value.trim();
+                const tipoRoupa = document.getElementById('variacaoTipoRoupa').value;
+                
+                if (!categoriaId || !nome) {
+                    alert('Por favor, preencha todos os campos');
+                    return;
+                }
+                
+                try {
+                    const token = localStorage.getItem('authToken');
+                    const response = await fetch(`${API_BASE}/variacoes-roupas`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`
+                        },
+                        body: JSON.stringify({ nome, categoria_id: categoriaId })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (!response.ok) {
+                        throw new Error(data.error || 'Erro ao criar variação');
+                    }
+                    
+                    alert('Variação criada com sucesso!');
+                    closeModal('novaVariacaoModal');
+                    novaVariacaoForm.reset();
+                    await loadVariacoesRoupas(categoriaId, tipoRoupa);
+                } catch (error) {
+                    alert('Erro ao criar variação: ' + error.message);
+                }
+            });
+        }
+
+        // Event listener para formulário de upload de roupa
+        const uploadRoupaForm = document.getElementById('uploadRoupaForm');
+        if (uploadRoupaForm) {
+            uploadRoupaForm.addEventListener('submit', async function(e) {
+                e.preventDefault();
+                
+                const tipo = document.getElementById('uploadRoupaTipo').value;
+                const roupaArquivo = document.getElementById('roupaArquivo').files[0];
+                
+                if (!roupaArquivo) {
+                    alert('Por favor, selecione uma imagem da roupa');
+                    return;
+                }
+                
+                try {
+                    const formData = new FormData();
+                    formData.append('imagem', roupaArquivo);
+                    
+                    const categoriaId = document.getElementById(`categoria${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).value;
+                    const numero = document.getElementById(`numero${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).value;
+                    const variacaoId = document.getElementById(`variacao${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).value;
+                    
+                    if (categoriaId) formData.append('categoria_id', categoriaId);
+                    if (numero) formData.append('numero', numero);
+                    if (variacaoId) formData.append('variacao_id', variacaoId);
+                    
+                    const token = localStorage.getItem('authToken');
+                    const response = await fetch(`${API_BASE}/setup-roupas/${tipo}`, {
+                        method: 'PUT',
+                        headers: {
+                            'Authorization': `Bearer ${token}`
+                        },
+                        body: formData
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (!response.ok) {
+                        throw new Error(data.error || 'Erro ao fazer upload da imagem');
+                    }
+                    
+                    alert('Imagem enviada com sucesso!');
+                    closeModal('uploadRoupaModal');
+                    uploadRoupaForm.reset();
+                    await loadSetupRoupas();
+                } catch (error) {
+                    alert('Erro ao fazer upload da imagem: ' + error.message);
+                }
+            });
+        }
+
+        // Event listeners para mudança de categoria (carregar variações)
+        // Será configurado quando a aba Setup for carregada
+        function configurarEventListenersSetup() {
+            const categoriaDiaADia = document.getElementById('categoriaDiaADia');
+            const categoriaAcao = document.getElementById('categoriaAcao');
+            
+            if (categoriaDiaADia) {
+                categoriaDiaADia.removeEventListener('change', categoriaDiaADia._changeHandler);
+                categoriaDiaADia._changeHandler = function() {
+                    loadVariacoesRoupas(this.value, 'dia_a_dia');
+                };
+                categoriaDiaADia.addEventListener('change', categoriaDiaADia._changeHandler);
+            }
+            
+            if (categoriaAcao) {
+                categoriaAcao.removeEventListener('change', categoriaAcao._changeHandler);
+                categoriaAcao._changeHandler = function() {
+                    loadVariacoesRoupas(this.value, 'acao');
+                };
+                categoriaAcao.addEventListener('change', categoriaAcao._changeHandler);
+            }
+        }
+
         const configMateriaisMunicaoForm = document.getElementById('configMateriaisMunicaoForm');
         if (configMateriaisMunicaoForm) {
             configMateriaisMunicaoForm.addEventListener('submit', async function(e) {
@@ -7449,6 +7879,297 @@ let editingEncomendaId = null;
          * identificar qual item deve ser atualizado.
          */
         let currentEditItemFamiliaId = null;
+
+        // ==================== LOCALIZAÇÃO FACÇÃO - MAPA ====================
+        
+        // Carregar mapa da facção
+        async function loadMapaFaccao() {
+            const mapaLoading = document.getElementById('mapaLoading');
+            const mapaContainer = document.getElementById('mapaContainer');
+            const mapaVazio = document.getElementById('mapaVazio');
+            
+            mapaLoading.style.display = 'block';
+            mapaContainer.style.display = 'none';
+            mapaVazio.style.display = 'none';
+            
+            try {
+                const token = localStorage.getItem('authToken');
+                const response = await fetch(`${API_BASE}/mapa-faccao`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Erro ao carregar mapa');
+                }
+                
+                const mapa = await response.json();
+                mapaLoading.style.display = 'none';
+                
+                if (mapa && mapa.caminho_imagem) {
+                    document.getElementById('mapaImagem').src = mapa.caminho_imagem;
+                    const info = `Atualizado em ${new Date(mapa.data_atualizacao).toLocaleDateString('pt-BR')} por ${mapa.atualizado_por || 'sistema'}`;
+                    document.getElementById('mapaInfo').textContent = info;
+                    mapaContainer.style.display = 'block';
+                } else {
+                    mapaVazio.style.display = 'block';
+                }
+            } catch (error) {
+                console.error('Erro ao carregar mapa:', error);
+                mapaLoading.style.display = 'none';
+                mapaVazio.style.display = 'block';
+            }
+        }
+
+        // ==================== SETUP - ROUPAS ====================
+        
+        let categoriasRoupas = [];
+        let variacoesRoupas = [];
+        let setupRoupas = {};
+
+        // Carregar setup completo
+        async function loadSetup() {
+            const setupLoading = document.getElementById('setupLoading');
+            const setupContainer = document.getElementById('setupContainer');
+            
+            setupLoading.style.display = 'block';
+            setupContainer.style.display = 'none';
+            
+            try {
+                await Promise.all([
+                    loadCategoriasRoupas(),
+                    loadSetupRoupas()
+                ]);
+                
+                configurarEventListenersSetup();
+                
+                setupLoading.style.display = 'none';
+                setupContainer.style.display = 'block';
+            } catch (error) {
+                console.error('Erro ao carregar setup:', error);
+                setupLoading.style.display = 'none';
+                alert('Erro ao carregar configurações');
+            }
+        }
+
+        // Carregar categorias de roupas
+        async function loadCategoriasRoupas() {
+            try {
+                const token = localStorage.getItem('authToken');
+                const response = await fetch(`${API_BASE}/categorias-roupas`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Erro ao carregar categorias');
+                }
+                
+                categoriasRoupas = await response.json();
+                atualizarSelectsCategorias();
+            } catch (error) {
+                console.error('Erro ao carregar categorias:', error);
+            }
+        }
+
+        // Atualizar selects de categorias
+        function atualizarSelectsCategorias() {
+            const selects = ['categoriaDiaADia', 'categoriaAcao', 'variacaoCategoria'];
+            selects.forEach(selectId => {
+                const select = document.getElementById(selectId);
+                if (!select) return;
+                
+                const currentValue = select.value;
+                select.innerHTML = selectId === 'variacaoCategoria' 
+                    ? '<option value="">Selecione uma categoria...</option>'
+                    : '<option value="">Selecione uma categoria...</option>';
+                
+                categoriasRoupas.forEach(cat => {
+                    const option = document.createElement('option');
+                    option.value = cat.id;
+                    option.textContent = cat.nome;
+                    select.appendChild(option);
+                });
+                
+                if (currentValue) {
+                    select.value = currentValue;
+                }
+            });
+        }
+
+        // Carregar variações de roupas para uma categoria
+        async function loadVariacoesRoupas(categoriaId, tipoRoupa) {
+            if (!categoriaId) {
+                const selectId = tipoRoupa === 'dia_a_dia' ? 'variacaoDiaADia' : 'variacaoAcao';
+                const select = document.getElementById(selectId);
+                if (select) {
+                    select.innerHTML = '<option value="">Nenhuma variação</option>';
+                }
+                return;
+            }
+            
+            try {
+                const token = localStorage.getItem('authToken');
+                const response = await fetch(`${API_BASE}/variacoes-roupas?categoria_id=${categoriaId}`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Erro ao carregar variações');
+                }
+                
+                const variacoes = await response.json();
+                const selectId = tipoRoupa === 'dia_a_dia' ? 'variacaoDiaADia' : 'variacaoAcao';
+                const select = document.getElementById(selectId);
+                
+                if (select) {
+                    const currentValue = select.value;
+                    select.innerHTML = '<option value="">Nenhuma variação</option>';
+                    
+                    variacoes.forEach(variacao => {
+                        const option = document.createElement('option');
+                        option.value = variacao.id;
+                        option.textContent = variacao.nome;
+                        select.appendChild(option);
+                    });
+                    
+                    if (currentValue) {
+                        select.value = currentValue;
+                    }
+                }
+            } catch (error) {
+                console.error('Erro ao carregar variações:', error);
+            }
+        }
+
+        // Carregar configurações de roupas
+        async function loadSetupRoupas() {
+            try {
+                const token = localStorage.getItem('authToken');
+                const response = await fetch(`${API_BASE}/setup-roupas`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Erro ao carregar configurações');
+                }
+                
+                const configs = await response.json();
+                setupRoupas = {};
+                
+                configs.forEach(config => {
+                    setupRoupas[config.tipo] = config;
+                });
+                
+                renderizarSetupRoupas();
+            } catch (error) {
+                console.error('Erro ao carregar configurações:', error);
+            }
+        }
+
+        // Renderizar configurações de roupas
+        function renderizarSetupRoupas() {
+            // Roupa Dia a Dia
+            const configDiaADia = setupRoupas['dia_a_dia'];
+            if (configDiaADia) {
+                if (configDiaADia.caminho_imagem) {
+                    document.getElementById('imagemDiaADia').src = configDiaADia.caminho_imagem;
+                    document.getElementById('imagemDiaADia').style.display = 'block';
+                    document.getElementById('placeholderDiaADia').style.display = 'none';
+                }
+                if (configDiaADia.categoria_id) {
+                    document.getElementById('categoriaDiaADia').value = configDiaADia.categoria_id;
+                    loadVariacoesRoupas(configDiaADia.categoria_id, 'dia_a_dia');
+                }
+                if (configDiaADia.numero !== null) {
+                    document.getElementById('numeroDiaADia').value = configDiaADia.numero;
+                }
+                if (configDiaADia.variacao_id) {
+                    document.getElementById('variacaoDiaADia').value = configDiaADia.variacao_id;
+                }
+            }
+
+            // Roupa de Ação
+            const configAcao = setupRoupas['acao'];
+            if (configAcao) {
+                if (configAcao.caminho_imagem) {
+                    document.getElementById('imagemAcao').src = configAcao.caminho_imagem;
+                    document.getElementById('imagemAcao').style.display = 'block';
+                    document.getElementById('placeholderAcao').style.display = 'none';
+                }
+                if (configAcao.categoria_id) {
+                    document.getElementById('categoriaAcao').value = configAcao.categoria_id;
+                    loadVariacoesRoupas(configAcao.categoria_id, 'acao');
+                }
+                if (configAcao.numero !== null) {
+                    document.getElementById('numeroAcao').value = configAcao.numero;
+                }
+                if (configAcao.variacao_id) {
+                    document.getElementById('variacaoAcao').value = configAcao.variacao_id;
+                }
+            }
+        }
+
+        // Abrir modal de upload de roupa
+        function abrirUploadRoupa(tipo) {
+            document.getElementById('uploadRoupaTipo').value = tipo;
+            openModal('uploadRoupaModal');
+        }
+
+        // Abrir modal de nova variação
+        function abrirNovaVariacao(tipo) {
+            document.getElementById('variacaoTipoRoupa').value = tipo;
+            openModal('novaVariacaoModal');
+        }
+
+        // Salvar configuração de roupa
+        async function salvarRoupa(event, tipo) {
+            event.preventDefault();
+            
+            const user = JSON.parse(localStorage.getItem('user') || '{}');
+            const canEdit = ['admin', 'grande-mestre', 'mestre-dos-ventos'].includes(user.role);
+            
+            if (!canEdit) {
+                alert('Apenas admin, Grande Mestre ou Mestre dos Ventos podem salvar configurações');
+                return;
+            }
+            
+            const categoriaId = document.getElementById(`categoria${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).value;
+            const numero = document.getElementById(`numero${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).value;
+            const variacaoId = document.getElementById(`variacao${tipo === 'dia_a_dia' ? 'DiaADia' : 'Acao'}`).value;
+            
+            try {
+                const token = localStorage.getItem('authToken');
+                const response = await fetch(`${API_BASE}/setup-roupas/${tipo}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                        categoria_id: categoriaId || null,
+                        numero: numero ? parseInt(numero) : null,
+                        variacao_id: variacaoId || null
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Erro ao salvar configuração');
+                }
+                
+                alert('Configuração salva com sucesso!');
+                loadSetupRoupas();
+            } catch (error) {
+                alert('Erro ao salvar configuração: ' + error.message);
+            }
+        }
 
         /**
          * Abre o modal de edição de um item no inventário da família.
