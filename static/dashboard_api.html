@@ -2299,6 +2299,15 @@ let editingEncomendaId = null;
                         configMunicaoBtn.style.display = 'none';
                     }
                 }
+                const encomendaStatusSelect = document.getElementById('encomendaStatus');
+                if (encomendaStatusSelect) {
+                    if (['admin','grande-mestre','mestre-dos-ventos'].includes(user.role)) {
+                        encomendaStatusSelect.disabled = false;
+                    } else {
+                        encomendaStatusSelect.value = 'pendente';
+                        encomendaStatusSelect.disabled = true;
+                    }
+                }
 
                 // Exibe o botão de configurar materiais por rota apenas para Grande Mestre ou Mestre dos Ventos
                 const btnConfigMateriaisRota = document.getElementById('btnConfigMateriaisRota');
@@ -5423,6 +5432,9 @@ let editingEncomendaId = null;
                     editingEncomendaId = null;
                     // Atualiza lista de encomendas
                     loadEncomendas();
+                    if (isEditing) {
+                        loadEstoque();
+                    }
                     this.reset();
                     // Quando a família selecionada era "outro", garantir que o campo de texto seja escondido ao resetar
                     const outroInput = document.getElementById('encomendaFamiliaOutro');
