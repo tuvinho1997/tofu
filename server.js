@@ -711,6 +711,24 @@ function initializeDatabase() {
         FOREIGN KEY (categoria_id) REFERENCES categorias_roupas(id)
     )`);
 
+    // Migração: adicionar coluna numero se não existir (para bancos antigos)
+    db.all('PRAGMA table_info(variacoes_roupas)', (err, cols) => {
+        if (err) {
+            console.warn('Erro ao verificar estrutura de variacoes_roupas:', err.message);
+            return;
+        }
+        const colNumero = cols.find(col => col.name === 'numero');
+        if (!colNumero) {
+            db.run('ALTER TABLE variacoes_roupas ADD COLUMN numero INTEGER', (alterErr) => {
+                if (alterErr) {
+                    console.warn('Não foi possível adicionar a coluna numero em variacoes_roupas:', alterErr.message);
+                } else {
+                    console.log('Coluna numero adicionada à tabela variacoes_roupas');
+                }
+            });
+        }
+    });
+
     // Criar tabela para configurações de roupas
     db.run(`CREATE TABLE IF NOT EXISTS setup_roupas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
