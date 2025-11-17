@@ -1934,12 +1934,14 @@
                     </select>
                 </div>
                 <div class="form-group">
-                    <label>Usuário (Login) - Opcional</label>
-                    <input type="text" id="membroUsername" placeholder="Deixe em branco se não quiser criar login">
+                    <label>Usuário (Login) <span style="color: #e74c3c;">*</span></label>
+                    <input type="text" id="membroUsername" required placeholder="Nome de usuário para login">
+                    <small style="color: #95a5a6; font-size: 12px;">Obrigatório para o membro poder fazer login</small>
                 </div>
                 <div class="form-group">
-                    <label>Senha - Opcional</label>
-                    <input type="password" id="membroPassword" placeholder="Deixe em branco se não quiser criar login">
+                    <label>Senha <span style="color: #e74c3c;">*</span></label>
+                    <input type="password" id="membroPassword" required placeholder="Senha para login" minlength="4">
+                    <small style="color: #95a5a6; font-size: 12px;">Mínimo de 4 caracteres</small>
                 </div>
                 <div class="form-group">
                     <label>Foto do Personagem (opcional)</label>
@@ -5832,9 +5834,14 @@ let editingEncomendaId = null;
             const imagemInput = document.getElementById('membroImagem');
             let imagemPath = null;
             
-            // Validar se username e senha foram fornecidos juntos
-            if ((username && !password) || (!username && password)) {
-                alert('Por favor, forneça tanto o usuário quanto a senha, ou deixe ambos em branco.');
+            // Validar se username e senha foram fornecidos (agora obrigatórios)
+            if (!username || !password) {
+                alert('Por favor, forneça tanto o usuário quanto a senha. Ambos são obrigatórios para o membro poder fazer login.');
+                return;
+            }
+            
+            if (password.length < 4) {
+                alert('A senha deve ter no mínimo 4 caracteres.');
                 return;
             }
             
@@ -5858,12 +5865,8 @@ let editingEncomendaId = null;
                     imagemPath = imgData.caminho;
                 }
 
-                // Agora envia os dados do membro com o campo imagem (pode ser null) e credenciais (opcionais)
-                const payload = { nome, rg, telefone, cargo, imagem: imagemPath };
-                if (username && password) {
-                    payload.username = username;
-                    payload.password = password;
-                }
+                // Agora envia os dados do membro com o campo imagem (pode ser null) e credenciais (obrigatórias)
+                const payload = { nome, rg, telefone, cargo, imagem: imagemPath, username, password };
                 
                 const response = await fetch(`${API_BASE}/membros`, {
                     method: 'POST',
