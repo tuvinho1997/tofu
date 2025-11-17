@@ -1176,23 +1176,51 @@ app.get('/api/encomendas', authenticateToken, (req, res) => {
 });
 
 app.post('/api/encomendas', authenticateToken, async (req, res) => {
-    const { cliente, familia, telefone_cliente, municao_5mm, municao_9mm, municao_762mm, municao_12cbc, valor_total, comissao, usuario } = req.body;
+    const { cliente, familia, telefone_cliente, municao_5mm, municao_9mm, municao_762mm, municao_12cbc, valor_total, comissao, usuario, status } = req.body;
+    const q5 = parseInt(municao_5mm, 10) || 0;
+    const q9 = parseInt(municao_9mm, 10) || 0;
+    const q762 = parseInt(municao_762mm, 10) || 0;
+    const q12 = parseInt(municao_12cbc, 10) || 0;
+    const allowedManagers = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    const userRole = req.user && req.user.role;
+    let statusInicial = typeof status === 'string' ? status.toLowerCase() : 'pendente';
+    if (!allowedManagers.includes(userRole)) {
+        // Usuários base apenas cadastram encomendas pendentes
+        statusInicial = 'pendente';
+    } else if (!['pendente', 'pronto', 'entregue', 'cancelado'].includes(statusInicial)) {
+        statusInicial = 'pendente';
+    }
 
     db.run(
-        'INSERT INTO encomendas (cliente, familia, telefone_cliente, municao_5mm, municao_9mm, municao_762mm, municao_12cbc, valor_total, comissao, usuario) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [cliente, familia, telefone_cliente, municao_5mm || 0, municao_9mm || 0, municao_762mm || 0, municao_12cbc || 0, valor_total, comissao, usuario],
+        'INSERT INTO encomendas (cliente, familia, telefone_cliente, municao_5mm, municao_9mm, municao_762mm, municao_12cbc, valor_total, comissao, usuario, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [cliente, familia, telefone_cliente, q5, q9, q762, q12, valor_total, comissao, usuario, statusInicial],
         function (err) {
             if (err) {
                 return res.status(500).json({ error: err.message });
             }
-            res.json({
-                message: 'Encomenda cadastrada com sucesso',
-                id: this.lastID
-            });
-            // Após cadastrar, verifica se há estoque suficiente para marcar encomendas como prontas
-            verificarEncomendasProntas().catch(err => {
-                console.error('Erro ao verificar encomendas prontas após cadastro:', err);
-            });
+            const encomendaId = this.lastID;
+            const finalize = () => {
+                res.json({
+                    message: 'Encomenda cadastrada com sucesso',
+                    id: encomendaId,
+                    status: statusInicial
+                });
+                verificarEncomendasProntas().catch(err => {
+                    console.error('Erro ao verificar encomendas prontas após cadastro:', err);
+                });
+            };
+
+            if (statusInicial === 'entregue') {
+                baixarEstoquePorEncomenda(q5, q9, q762, q12)
+                    .then(finalize)
+                    .catch(errBaixar => {
+                        console.error('Erro ao baixar estoque ao criar encomenda entregue:', errBaixar);
+                        db.run('DELETE FROM encomendas WHERE id = ?', [encomendaId], () => {});
+                        res.status(400).json({ error: 'Erro ao baixar estoque para encomenda entregue: ' + errBaixar.message });
+                    });
+            } else {
+                finalize();
+            }
         }
     );
 });
@@ -1931,7 +1959,11 @@ app.get('/api/membros', (req, res) => {
     });
 });
 
-app.post('/api/membros', (req, res) => {
+app.post('/api/membros', authenticateToken, (req, res) => {
+    const allowedRolesMembros = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRolesMembros.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas administradores ou os dois maiores cargos podem gerenciar membros.' });
+    }
     const { nome, rg, telefone, cargo, imagem, username, password } = req.body;
 
     // cargo default para membros sem definição explícita
@@ -2106,7 +2138,11 @@ app.post('/api/membros', (req, res) => {
     });
 });
 
-app.put('/api/membros/:id', (req, res) => {
+app.put('/api/membros/:id', authenticateToken, (req, res) => {
+    const allowedRolesMembros = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRolesMembros.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas administradores ou os dois maiores cargos podem alterar membros.' });
+    }
     const { id } = req.params;
     const { nome, rg, telefone, cargo } = req.body;
 
