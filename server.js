@@ -1829,6 +1829,11 @@ app.put('/api/config/commission-rate', authenticateToken, (req, res) => {
 
 // Permite fabricar munições em lotes. Disponível para todos os usuários autenticados.
 app.post('/api/estoque/fabricar', authenticateToken, (req, res) => {
+    const allowedRolesFabricacao = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRolesFabricacao.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Apenas administradores ou os dois maiores cargos podem fabricar munição.' });
+    }
+
     const { tipo_municao, lotes } = req.body;
 
     const numLotes = parseInt(lotes) || 0;
