@@ -4043,6 +4043,61 @@ app.post('/api/usuarios/limpar-orfaos', authenticateToken, (req, res) => {
     });
 });
 
+// Endpoint para limpar TODOS os usuários exceto o admin (tofu)
+// Útil para resetar completamente o sistema e recadastrar todos os usuários
+app.post('/api/usuarios/limpar-todos-exceto-admin', authenticateToken, (req, res) => {
+    const allowedRoles = ['admin'];
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas o administrador pode executar esta ação.' });
+    }
+
+    // Confirmar que o usuário realmente quer fazer isso
+    // (a confirmação deve ser feita no frontend antes de chamar este endpoint)
+
+    // Buscar todos os usuários exceto o admin
+    db.all('SELECT id, username, role FROM usuarios WHERE username != ?', ['tofu'], (err, usuarios) => {
+        if (err) {
+            return res.status(500).json({ error: 'Erro ao buscar usuários: ' + err.message });
+        }
+
+        if (usuarios.length === 0) {
+            return res.json({ 
+                message: 'Nenhum usuário encontrado para remover (apenas admin existe)',
+                removidos: 0,
+                usuarios: []
+            });
+        }
+
+        // Remover cada usuário
+        let removidos = 0;
+        let erros = [];
+        let processados = 0;
+
+        usuarios.forEach((usuario) => {
+            db.run('DELETE FROM usuarios WHERE id = ?', [usuario.id], function(deleteErr) {
+                processados++;
+                if (deleteErr) {
+                    erros.push({ username: usuario.username, erro: deleteErr.message });
+                } else {
+                    removidos++;
+                }
+
+                // Quando todos foram processados, retornar resposta
+                if (processados === usuarios.length) {
+                    res.json({
+                        message: `${removidos} usuário(s) removido(s) com sucesso. Apenas o admin (tofu) permanece.`,
+                        removidos: removidos,
+                        total_encontrados: usuarios.length,
+                        erros: erros.length > 0 ? erros : undefined,
+                        usuarios_removidos: usuarios.filter((u) => !erros.find(e => e.username === u.username)).map(u => u.username),
+                        admin_preservado: 'tofu'
+                    });
+                }
+            });
+        });
+    });
+});
+
 // Endpoint de debug para verificar usernames (apenas para administradores)
 app.get('/api/debug/username/:username', authenticateToken, (req, res) => {
     const allowedRoles = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
@@ -4201,9 +4256,38 @@ app.put('/api/usuarios/:id/ativar', authenticateToken, (req, res) => {
         if (!pend) return res.status(404).json({ error: 'Cadastro pendente não encontrado' });
         db.get('SELECT id FROM usuarios WHERE username = ?', [pend.username], (err2, exists) => {
             if (err2) return res.status(500).json({ error: err2.message });
-            if (exists) return res.status(400).json({ error: 'Nome de usuário já está em uso' });
-            // Cria usuário definitivo
-            db.run('INSERT INTO usuarios (username, password, role) VALUES (?, ?, ?)', [pend.username, pend.password, newRole], function(err3) {
+            
+            // Se o usuário existe, verificar se tem membro correspondente
+            if (exists) {
+                db.get(`
+                    SELECT 1 FROM membros m 
+                    WHERE LOWER(TRIM(m.nome)) = LOWER(TRIM(?))
+                    OR m.nome LIKE ?
+                `, [pend.username, `%${pend.username}%`], (errMembro, membro) => {
+                    if (errMembro) return res.status(500).json({ error: errMembro.message });
+                    
+                    // Se tem membro correspondente, o username está realmente em uso
+                    if (membro) {
+                        return res.status(400).json({ error: 'Nome de usuário já está em uso por um membro ativo' });
+                    }
+                    
+                    // Se não tem membro correspondente, é um usuário órfão - remover antes de criar o novo
+                    db.run('DELETE FROM usuarios WHERE id = ?', [exists.id], function(deleteErr) {
+                        if (deleteErr) return res.status(500).json({ error: 'Erro ao remover usuário órfão: ' + deleteErr.message });
+                        
+                        // Agora criar o novo usuário
+                        criarUsuario();
+                    });
+                });
+                return;
+            }
+            
+            // Se não existe, criar normalmente
+            criarUsuario();
+            
+            function criarUsuario() {
+                // Cria usuário definitivo
+                db.run('INSERT INTO usuarios (username, password, role) VALUES (?, ?, ?)', [pend.username, pend.password, newRole], function(err3) {
                 if (err3) return res.status(500).json({ error: err3.message });
                 // Cria membro correspondente incluindo a imagem se existir
                 db.run('INSERT INTO membros (nome, rg, telefone, cargo, imagem) VALUES (?, ?, ?, ?, ?)', 
