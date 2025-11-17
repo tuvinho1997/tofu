@@ -1186,14 +1186,36 @@ app.post('/api/auth/register', (req, res) => {
         return res.status(400).json({ error: 'Dados incompletos para cadastro' });
     }
     // Verificar se já existe usuário ou cadastro pendente com o mesmo username
+    // Verificar se o username já existe e se o usuário está na tabela membros
     db.get('SELECT id FROM usuarios WHERE username = ?', [username], (err, existingUser) => {
         if (err) {
             return res.status(500).json({ error: err.message });
         }
         if (existingUser) {
-            return res.status(400).json({ error: 'Nome de usuário já está em uso' });
+            // Verificar se o usuário existe tem membro correspondente na tabela membros
+            db.get(`
+                SELECT 1 FROM membros m 
+                WHERE LOWER(TRIM(m.nome)) = LOWER(TRIM(?))
+                OR m.nome LIKE ?
+            `, [username, `%${username}%`], (errMembro, membro) => {
+                if (errMembro) {
+                    return res.status(500).json({ error: errMembro.message });
+                }
+                // Se o usuário tem membro correspondente, o username está em uso
+                if (membro) {
+                    return res.status(400).json({ error: 'Nome de usuário já está em uso' });
+                }
+                // Se não tem membro correspondente, o username está disponível (usuário antigo)
+                // Continuar com a verificação de cadastro pendente
+                verificarCadastroPendente();
+            });
+            return;
         }
-        db.get('SELECT id FROM cadastro_pendentes WHERE username = ?', [username], (err2, pendingRow) => {
+        // Se não existe usuário, verificar cadastro pendente
+        verificarCadastroPendente();
+        
+        function verificarCadastroPendente() {
+            db.get('SELECT id FROM cadastro_pendentes WHERE username = ?', [username], (err2, pendingRow) => {
             if (err2) {
                 return res.status(500).json({ error: err2.message });
             }
@@ -1235,7 +1257,8 @@ app.post('/api/auth/register', (req, res) => {
                     }
                 );
             });
-        });
+            });
+        }
     });
 });
 
@@ -2203,7 +2226,16 @@ app.post('/api/estoque/fabricar', authenticateToken, (req, res) => {
 
 // Rotas de membros
 app.get('/api/membros', (req, res) => {
-    db.all('SELECT * FROM membros ORDER BY nome', (err, rows) => {
+    // Buscar membros com informações de login (username) correspondente
+    db.all(`
+        SELECT 
+            m.*,
+            u.username,
+            u.id as user_id
+        FROM membros m
+        LEFT JOIN usuarios u ON LOWER(TRIM(u.username)) = LOWER(TRIM(m.nome))
+        ORDER BY m.nome
+    `, [], (err, rows) => {
         if (err) {
             return res.status(500).json({ error: err.message });
         }
@@ -2255,15 +2287,36 @@ app.post('/api/membros', authenticateToken, (req, res) => {
                     return res.status(500).json({ error: 'Erro ao verificar username: ' + errUser.message });
                 }
                 if (existingUser) {
-                    console.log(`Username "${username}" já existe em usuarios (ID: ${existingUser.id}, username: "${existingUser.username}")`);
-                    // Se o username já existe, remover o membro criado e retornar erro
-                    db.run('DELETE FROM membros WHERE id = ?', [membroId], () => {});
-                    return res.status(400).json({ error: `Username já está em uso (encontrado: "${existingUser.username}"). Escolha outro.` });
+                    // Verificar se o usuário tem membro correspondente na tabela membros
+                    db.get(`
+                        SELECT 1 FROM membros m 
+                        WHERE LOWER(TRIM(m.nome)) = LOWER(TRIM(?))
+                        OR m.nome LIKE ?
+                    `, [existingUser.username, `%${existingUser.username}%`], (errMembro, membro) => {
+                        if (errMembro) {
+                            console.error('Erro ao verificar membro correspondente:', errMembro.message);
+                            db.run('DELETE FROM membros WHERE id = ?', [membroId], () => {});
+                            return res.status(500).json({ error: 'Erro ao verificar membro: ' + errMembro.message });
+                        }
+                        // Se o usuário tem membro correspondente, o username está em uso
+                        if (membro) {
+                            console.log(`Username "${username}" já existe em usuarios e tem membro correspondente (ID: ${existingUser.id}, username: "${existingUser.username}")`);
+                            db.run('DELETE FROM membros WHERE id = ?', [membroId], () => {});
+                            return res.status(400).json({ error: `Username já está em uso (encontrado: "${existingUser.username}"). Escolha outro.` });
+                        }
+                        // Se não tem membro correspondente, o username está disponível (usuário antigo)
+                        // Continuar com a verificação de cadastro pendente
+                        verificarCadastroPendente();
+                    });
+                    return;
                 }
+                // Se não existe usuário, verificar cadastro pendente
+                verificarCadastroPendente();
                 
-                // Verificar também em cadastro_pendentes (verificação exata e case-insensitive)
-                db.get('SELECT id, username FROM cadastro_pendentes WHERE username = ? COLLATE NOCASE OR LOWER(TRIM(username)) = ?', 
-                       [usernameTrim, usernameTrim.toLowerCase()], (errPending, pendingUser) => {
+                function verificarCadastroPendente() {
+                    // Verificar também em cadastro_pendentes (verificação exata e case-insensitive)
+                    db.get('SELECT id, username FROM cadastro_pendentes WHERE username = ? COLLATE NOCASE OR LOWER(TRIM(username)) = ?', 
+                           [usernameTrim, usernameTrim.toLowerCase()], (errPending, pendingUser) => {
                     if (errPending) {
                         console.error('Erro ao verificar username em cadastro_pendentes:', errPending.message);
                         db.run('DELETE FROM membros WHERE id = ?', [membroId], () => {});
@@ -2379,6 +2432,7 @@ app.post('/api/membros', authenticateToken, (req, res) => {
                         });
                     });
                 });
+                }
             });
         } else {
             // Se não forneceu username/senha, apenas retorna sucesso do membro
@@ -3886,6 +3940,46 @@ app.get('/api/log-acessos', authenticateToken, (req, res) => {
             return res.status(500).json({ error: err.message });
         }
         res.json(rows);
+    });
+});
+
+// Endpoint para resetar senha de um usuário
+app.put('/api/usuarios/:id/resetar-senha', authenticateToken, (req, res) => {
+    const allowedRoles = ['admin', 'grande-mestre', 'mestre-dos-ventos'];
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas administradores e cargos mais altos podem resetar senhas.' });
+    }
+
+    const { id } = req.params;
+    const { nova_senha } = req.body;
+    
+    if (!nova_senha || nova_senha.trim() === '') {
+        return res.status(400).json({ error: 'Nova senha é obrigatória' });
+    }
+
+    // Hash da nova senha
+    const hashedPassword = bcrypt.hashSync(nova_senha, 10);
+
+    // Verificar se o usuário existe
+    db.get('SELECT id, username FROM usuarios WHERE id = ?', [id], (err, user) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        if (!user) {
+            return res.status(404).json({ error: 'Usuário não encontrado' });
+        }
+
+        // Atualizar a senha
+        db.run('UPDATE usuarios SET password = ? WHERE id = ?', [hashedPassword, id], function(updateErr) {
+            if (updateErr) {
+                return res.status(500).json({ error: updateErr.message });
+            }
+            res.json({ 
+                message: 'Senha resetada com sucesso',
+                username: user.username,
+                nova_senha: nova_senha
+            });
+        });
     });
 });
 
