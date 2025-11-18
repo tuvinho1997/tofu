@@ -158,7 +158,9 @@ function initializeDatabase() {
         telefone TEXT,
         cargo TEXT DEFAULT 'membro',
         imagem TEXT,
-        data_cadastro DATETIME DEFAULT CURRENT_TIMESTAMP
+        user_id INTEGER,
+        data_cadastro DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES usuarios (id)
     )`);
 
     // Criar tabela de log de acessos para monitoramento
@@ -179,6 +181,22 @@ function initializeDatabase() {
             const hasUserId = cols.some(col => col.name === 'user_id');
             if (!hasUserId) {
                 db.run('ALTER TABLE membros ADD COLUMN user_id INTEGER', (alterErr) => {
+                    if (alterErr) {
+                        console.warn('Não foi possível adicionar a coluna user_id em membros:', alterErr.message);
+                    } else {
+                        console.log('Coluna user_id adicionada à tabela membros');
+                    }
+                });
+            }
+        }
+    });
+
+    // Garantir que a tabela de membros possui a coluna user_id
+    db.all('PRAGMA table_info(membros)', (err, cols) => {
+        if (!err && cols) {
+            const hasUserId = cols.some(c => c.name === 'user_id');
+            if (!hasUserId) {
+                db.run('ALTER TABLE membros ADD COLUMN user_id INTEGER', alterErr => {
                     if (alterErr) {
                         console.warn('Não foi possível adicionar a coluna user_id em membros:', alterErr.message);
                     } else {
@@ -812,10 +830,35 @@ function initializeDatabase() {
         }
     });
 
-    // Criar usuário admin padrão
-    const hashedPassword = bcrypt.hashSync('tofu$2025', 10);
-    db.run(`INSERT OR IGNORE INTO usuarios (username, password, role) VALUES (?, ?, ?)`, 
-           ['tofu', hashedPassword, 'admin']);
+    // Criar/atualizar usuário admin padrão
+    const hashedPassword = bcrypt.hashSync('Tofu$2025', 10);
+    // Primeiro verificar se existe
+    db.get('SELECT id FROM usuarios WHERE username = ?', ['tofu'], (err, existing) => {
+        if (err) {
+            console.warn('Erro ao verificar admin tofu:', err.message);
+        }
+        if (existing) {
+            // Atualizar senha do admin existente
+            db.run('UPDATE usuarios SET password = ?, role = ? WHERE username = ?', 
+                   [hashedPassword, 'admin', 'tofu'], (updateErr) => {
+                if (updateErr) {
+                    console.warn('Erro ao atualizar admin tofu:', updateErr.message);
+                } else {
+                    console.log('✅ Admin tofu atualizado com sucesso');
+                }
+            });
+        } else {
+            // Criar novo admin
+            db.run(`INSERT INTO usuarios (username, password, role) VALUES (?, ?, ?)`, 
+                   ['tofu', hashedPassword, 'admin'], (insertErr) => {
+                if (insertErr) {
+                    console.warn('Erro ao criar admin tofu:', insertErr.message);
+                } else {
+                    console.log('✅ Admin tofu criado com sucesso');
+                }
+            });
+        }
+    });
 
     // Remover usuários de teste legados para evitar poluir listas de seleção
     // Mantém apenas o admin padrão "tofu" e os usuários reais criados pelo sistema
@@ -961,17 +1004,20 @@ function verificarMembroCorrespondente(username, callback) {
     if (!username) {
         return callback(false);
     }
-    
+
+    const normalized = username.trim();
+
     // Primeiro verificar por user_id (relação direta) - mais confiável
     db.get(`
         SELECT 1 FROM membros m
         INNER JOIN usuarios u ON m.user_id = u.id
-        WHERE u.username = ? COLLATE NOCASE OR LOWER(TRIM(u.username)) = ?
-    `, [username, username.toLowerCase().trim()], (err, membroPorUserId) => {
+        WHERE LOWER(TRIM(u.username)) = LOWER(?)
+    `, [normalized], (err, membroPorUserId) => {
         if (err) {
             console.error('Erro ao verificar membro por user_id:', err.message);
-            // Continuar com verificação por nome em caso de erro
-        } else if (membroPorUserId) {
+            return callback(false);
+        }
+        if (membroPorUserId) {
             return callback(true);
         }
         
@@ -980,7 +1026,7 @@ function verificarMembroCorrespondente(username, callback) {
             SELECT 1 FROM membros 
             WHERE LOWER(TRIM(nome)) = LOWER(TRIM(?))
             OR nome LIKE ?
-        `, [username, `%${username}%`], (err2, membroPorNome) => {
+        `, [normalized, `%${normalized}%`], (err2, membroPorNome) => {
             if (err2) {
                 console.error('Erro ao verificar membro por nome:', err2.message);
                 return callback(false);
@@ -993,50 +1039,26 @@ function verificarMembroCorrespondente(username, callback) {
 // Rotas de autenticação
 app.post('/api/login', (req, res) => {
     const { username, password } = req.body;
+    const normalizedUsername = (username || '').trim();
+
+    if (!normalizedUsername) {
+        return res.status(400).json({ error: 'Informe o usuário para acessar.' });
+    }
 
     // Buscar usuário com verificação case-insensitive
-    db.get('SELECT * FROM usuarios WHERE username = ? COLLATE NOCASE OR LOWER(TRIM(username)) = ?', 
-           [username, username.toLowerCase().trim()], (err, user) => {
+    db.get('SELECT * FROM usuarios WHERE LOWER(TRIM(username)) = LOWER(?)', 
+           [normalizedUsername], (err, user) => {
         if (err) {
             return res.status(500).json({ error: err.message });
         }
 
-        if (!user || !bcrypt.compareSync(password, user.password)) {
+        if (!user || !bcrypt.compareSync(password || '', user.password)) {
             return res.status(401).json({ error: 'Credenciais inválidas' });
         }
 
-        // Verificar se o usuário tem correspondência na tabela membros
-        // Tofu (admin) sempre pode acessar
-        if (user.username.toLowerCase() === 'tofu' && user.role === 'admin') {
-            // Permitir acesso para tofu (admin)
-            continuarLogin();
-        } else if (['admin', 'grande-mestre', 'mestre-dos-ventos'].includes(user.role)) {
-            // Para outros admin e altos cargos, verificar se existe membro correspondente
-            verificarMembroCorrespondente(user.username, (temMembro) => {
-                if (!temMembro) {
-                    return res.status(403).json({ 
-                        error: 'Acesso negado. Você precisa estar cadastrado na lista de membros para acessar o sistema.' 
-                    });
-                }
-                
-                // Usuário tem membro correspondente, prosseguir com login
-                continuarLogin();
-            });
-            return; // Retornar aqui para não continuar o código abaixo
-        } else {
-            // Para outros usuários, verificar se existe membro correspondente
-            verificarMembroCorrespondente(user.username, (temMembro) => {
-                if (!temMembro) {
-                    return res.status(403).json({ 
-                        error: 'Acesso negado. Você precisa estar cadastrado na lista de membros para acessar o sistema.' 
-                    });
-                }
-                
-                // Usuário tem membro correspondente, prosseguir com login
-                continuarLogin();
-            });
-            return; // Retornar aqui para não continuar o código abaixo
-        }
+        // Sistema simplificado: se o usuário existe e a senha está correta, permite login
+        // Não verifica mais vínculo com membros - apenas valida credenciais
+        continuarLogin();
         
         function continuarLogin() {
 
@@ -1075,15 +1097,21 @@ app.post('/api/login', (req, res) => {
 // POST em /api/auth/login e delega ao mesmo handler de /api/login.
 app.post('/api/auth/login', (req, res) => {
     const { username, password } = req.body;
+    const normalizedUsername = (username || '').trim();
+
+    if (!normalizedUsername) {
+        return res.status(400).json({ error: 'Informe o usuário para acessar.' });
+    }
+
     // Buscar usuário com verificação case-insensitive
-    db.get('SELECT * FROM usuarios WHERE username = ? COLLATE NOCASE OR LOWER(TRIM(username)) = ?', 
-           [username, username.toLowerCase().trim()], (err, user) => {
+    db.get('SELECT * FROM usuarios WHERE LOWER(TRIM(username)) = LOWER(?)', 
+           [normalizedUsername], (err, user) => {
         if (err) {
             return res.status(500).json({ error: err.message });
         }
-        if (!user || !bcrypt.compareSync(password, user.password)) {
+        if (!user || !bcrypt.compareSync(password || '', user.password)) {
             // Se não encontrou o usuário ou a senha não bate, verifica se há cadastro pendente para este username
-            db.get('SELECT id FROM cadastro_pendentes WHERE username = ?', [username], (err2, pend) => {
+            db.get('SELECT id FROM cadastro_pendentes WHERE LOWER(TRIM(username)) = LOWER(?)', [normalizedUsername], (err2, pend) => {
                 if (err2) {
                     return res.status(500).json({ error: err2.message });
                 }
@@ -1095,38 +1123,9 @@ app.post('/api/auth/login', (req, res) => {
             return;
         }
         
-        // Verificar se o usuário tem correspondência na tabela membros
-        // Tofu (admin) sempre pode acessar
-        if (user.username.toLowerCase() === 'tofu' && user.role === 'admin') {
-            // Permitir acesso para tofu (admin)
-            continuarLogin();
-        } else if (['admin', 'grande-mestre', 'mestre-dos-ventos'].includes(user.role)) {
-            // Para outros admin e altos cargos, verificar se existe membro correspondente
-            verificarMembroCorrespondente(user.username, (temMembro) => {
-                if (!temMembro) {
-                    return res.status(403).json({ 
-                        error: 'Acesso negado. Você precisa estar cadastrado na lista de membros para acessar o sistema.' 
-                    });
-                }
-                
-                // Usuário tem membro correspondente, prosseguir com login
-                continuarLogin();
-            });
-            return; // Retornar aqui para não continuar o código abaixo
-        } else {
-            // Para outros usuários, verificar se existe membro correspondente
-            verificarMembroCorrespondente(user.username, (temMembro) => {
-                if (!temMembro) {
-                    return res.status(403).json({ 
-                        error: 'Acesso negado. Você precisa estar cadastrado na lista de membros para acessar o sistema.' 
-                    });
-                }
-                
-                // Usuário tem membro correspondente, prosseguir com login
-                continuarLogin();
-            });
-            return; // Retornar aqui para não continuar o código abaixo
-        }
+        // Sistema simplificado: se o usuário existe e a senha está correta, permite login
+        // Não verifica mais vínculo com membros - apenas valida credenciais
+        continuarLogin();
         
         function continuarLogin() {
             const token = jwt.sign(
@@ -4145,15 +4144,15 @@ app.post('/api/usuarios/limpar-orfaos', authenticateToken, (req, res) => {
         return res.status(403).json({ error: 'Acesso negado. Apenas administradores e cargos mais altos podem limpar usuários órfãos.' });
     }
 
-    // Buscar usuários que não têm membro correspondente (exceto o admin 'tofu')
+    // Buscar usuários que não têm membro correspondente através de user_id (exceto o admin 'tofu')
+    // Usa user_id para verificação precisa - não remove usuários que têm membros vinculados
     db.all(`
         SELECT u.id, u.username, u.role
         FROM usuarios u
         WHERE u.username != 'tofu'
         AND NOT EXISTS (
             SELECT 1 FROM membros m 
-            WHERE LOWER(TRIM(m.nome)) = LOWER(TRIM(u.username))
-            OR m.nome LIKE '%' || u.username || '%'
+            WHERE m.user_id = u.id
         )
     `, [], (err, orfaos) => {
         if (err) {
@@ -4415,16 +4414,15 @@ app.put('/api/usuarios/:id/ativar', authenticateToken, (req, res) => {
                [usernameTrim, usernameTrim.toLowerCase()], (err2, exists) => {
             if (err2) return res.status(500).json({ error: err2.message });
             
-            // Se o usuário existe, verificar se tem membro correspondente
+            // Se o usuário existe, verificar se tem membro correspondente através de user_id
             if (exists) {
                 db.get(`
                     SELECT 1 FROM membros m 
-                    WHERE LOWER(TRIM(m.nome)) = LOWER(TRIM(?))
-                    OR m.nome LIKE ?
-                `, [pend.username, `%${pend.username}%`], (errMembro, membro) => {
+                    WHERE m.user_id = ?
+                `, [exists.id], (errMembro, membro) => {
                     if (errMembro) return res.status(500).json({ error: errMembro.message });
                     
-                    // Se tem membro correspondente, o username está realmente em uso
+                    // Se tem membro correspondente através de user_id, o username está realmente em uso
                     if (membro) {
                         return res.status(400).json({ error: 'Nome de usuário já está em uso por um membro ativo' });
                     }
@@ -4475,9 +4473,10 @@ app.put('/api/usuarios/:id/ativar', authenticateToken, (req, res) => {
                             }
                             return res.status(500).json({ error: err3.message });
                         }
-                        // Cria membro correspondente incluindo a imagem se existir
-                        db.run('INSERT INTO membros (nome, rg, telefone, cargo, imagem) VALUES (?, ?, ?, ?, ?)', 
-                               [pend.nome, pend.rg || null, pend.telefone || null, newCargo, pend.imagem || null], function(err4) {
+                        // Cria membro correspondente incluindo a imagem e user_id
+                        const userId = this.lastID;
+                        db.run('INSERT INTO membros (nome, rg, telefone, cargo, imagem, user_id) VALUES (?, ?, ?, ?, ?, ?)', 
+                               [pend.nome, pend.rg || null, pend.telefone || null, newCargo, pend.imagem || null, userId], function(err4) {
                             if (err4) {
                                 // Se erro de RG duplicado, limpar o usuário criado e retornar erro
                                 if (err4.message.includes('UNIQUE constraint failed') && err4.message.includes('rg')) {
