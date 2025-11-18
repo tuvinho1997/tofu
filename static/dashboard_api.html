@@ -1353,7 +1353,6 @@
                 <div class="card-header">
                     <h3 class="card-title">Sistema de Membros</h3>
                     <div style="display: flex; gap: 10px;">
-                        <button id="btnLimparOrfaos" class="btn-secondary" style="background: #e67e22; display: none;" onclick="limparUsuariosOrfaos()">Limpar Usuários Órfãos</button>
                         <button id="btnNovoMembro" class="btn-primary" onclick="openModal('membroModal')">Novo Membro</button>
                     </div>
                 </div>
@@ -2569,14 +2568,6 @@ let editingEncomendaId = null;
                     }
                 }
 
-                const btnLimparOrfaos = document.getElementById('btnLimparOrfaos');
-                if (btnLimparOrfaos) {
-                    if (['admin','grande-mestre','mestre-dos-ventos'].includes(user.role)) {
-                        btnLimparOrfaos.style.display = 'inline-block';
-                    } else {
-                        btnLimparOrfaos.style.display = 'none';
-                    }
-                }
 
                 // Exibe o botão de adicionar itens no estoque apenas para administradores ou líderes
                 const addEstoqueBtn = document.getElementById('btnAddEstoque');
@@ -3516,38 +3507,6 @@ let editingEncomendaId = null;
             }
         }
 
-        // Função para limpar usuários órfãos (usuários sem membro correspondente)
-        async function limparUsuariosOrfaos() {
-            if (!confirm('Deseja remover todos os usuários que não têm membro correspondente na lista de membros?\n\nIsso liberará os usernames para reutilização.\n\nO usuário "tofu" (admin) não será afetado.')) {
-                return;
-            }
-
-            try {
-                const token = localStorage.getItem('authToken');
-                const response = await fetch(`${API_BASE}/usuarios/limpar-orfaos`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + token
-                    }
-                });
-                
-                const data = await response.json();
-                if (response.ok) {
-                    let mensagem = `${data.message}\n\nUsuários removidos: ${data.usuarios_removidos?.join(', ') || 'Nenhum'}`;
-                    if (data.erros && data.erros.length > 0) {
-                        mensagem += `\n\nErros: ${data.erros.map(e => e.username).join(', ')}`;
-                    }
-                    alert(mensagem);
-                    // Recarregar a lista de membros para atualizar as informações
-                    loadMembros();
-                } else {
-                    alert(data.error || 'Erro ao limpar usuários órfãos');
-                }
-            } catch (error) {
-                alert('Erro: ' + error.message);
-            }
-        }
 
         async function loadMembrosSelect() {
             const select = document.getElementById('rotaMembro');
